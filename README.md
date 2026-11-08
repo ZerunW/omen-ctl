@@ -1,5 +1,7 @@
 # omenctl
 
+English | [简体中文](README.zh-CN.md)
+
 Performance and fan control for the **HP OMEN 16-am0xxx (board 8D3F)** on Linux.
 
 On Linux this laptop's embedded controller (EC) keeps the CPU at PL1 45 W / PL2 56 W
@@ -7,8 +9,10 @@ On Linux this laptop's embedded controller (EC) keeps the CPU at PL1 45 W / PL2 
 commands that OMEN Gaming Hub sends on Windows. omenctl reproduces those commands through
 the kernel's `hp-wmi` driver and adds the fan control the firmware expects in that state.
 
-**Status: work in progress.** The kernel driver changes are tested on hardware; the daemon,
-CLI and GUI are being written. Use at your own risk.
+**Status: beta.** The kernel driver changes are tested on hardware. The service, command
+line tool and desktop app are complete and tested against a simulated sysfs tree; the
+hardware test checklist ([docs/HARDWARE_TEST.md](docs/HARDWARE_TEST.md)) is in progress.
+Use at your own risk.
 
 ## Measured results (Ubuntu 24.04, HWE kernel 7.0, BIOS F.14)
 
@@ -21,6 +25,32 @@ CLI and GUI are being written. Use at your own risk.
 | GPU power limit | 80–83 W | 115 W |
 
 Raw logs are in [`logs/`](logs/).
+
+## Features
+
+- Three modes: **Power Saver**, **Balanced**, **Unleashed** (CPU 90/130 W, GPU 115 W).
+- Fans: BIOS auto, per-fan curves (default: the BIOS fan table), manual speed, maximum.
+  A manual speed below what the curve recommends is allowed and flagged.
+- Desktop app with live readings and 60 s history, a fan curve editor, light and dark themes.
+- Command line tool: `omenctl status | mode ... | fan ...`.
+- Four safety layers; every failure ends with more cooling and less power.
+- One `.deb`: DKMS driver (rebuilt and MOK-signed for new kernels), service, tools,
+  `nvidia-powerd`. `apt remove` restores the original system.
+
+## Quick start
+
+```bash
+git clone https://github.com/ZerunW/omen-ctl && cd omen-ctl
+packaging/build-deb.sh                       # needs Rust 1.97+, dpkg-dev
+sudo apt install ./packaging/out/omenctl_0.1.0_amd64.deb
+sudo usermod -aG omenctl $USER               # log out and in
+sudo reboot
+omenctl status
+omenctl mode unleashed
+omenctl-gui
+```
+
+Full instructions: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 ## How it works (8D3F specifics)
 
@@ -39,16 +69,35 @@ Findings from the decompiled BIOS (`acpi/dsdt.dsl`, `acpi/ssdt17.dsl`) and EC re
 - The BIOS does almost no parameter validation, so only values observed from
   OMEN Gaming Hub are ever sent.
 
+## Architecture
+
+```
+omenctl-gui (user)     omenctl (user)
+          \               /
+     /run/omenctl.sock  (group omenctl, line-delimited JSON)
+                 |
+        omenctld (root, systemd Type=notify, watchdog)
+                 |   standard sysfs only
+   platform_profile · hp-wmi hwmon pwm · omenctl_kick · omenctl_concurrent_tdp
+                 |
+        hp-wmi (patched, DKMS)  ->  BIOS WMI  ->  EC
+```
+
 ## Repository layout
 
 | Path | Content |
 |---|---|
-| `PLAN.md` | design and implementation plan (Chinese) |
+| `app/omenctl-core` | fan curve, configuration, sysfs access, control loop, protocol |
+| `app/omenctld` | service |
+| `app/omenctl-cli` | command line tool `omenctl` |
+| `app/omenctl-gui` | desktop app (egui) |
+| `packaging/` | `.deb` build script, systemd units, DKMS config, maintainer and safety scripts |
+| `docs/` | user guide and hardware test checklist |
 | `hpwmi-upstream/` | upstream `hp-wmi.c` (commit `e931e54edb0f`) + `backport.patch` |
 | `tools/` | read-only EC snapshot script and hardware test scripts |
 | `logs/` | test logs |
 | `acpi/` | decompiled ACPI tables of board 8D3F, BIOS F.14 |
-| `app/` | Rust workspace: core library, daemon (`omenctld`), CLI (`omenctl`) |
+| `PLAN.md` | design and implementation plan (Chinese) |
 
 ### Driver changes (`hpwmi-upstream/backport.patch`)
 
@@ -64,18 +113,20 @@ On top of mainline `hp-wmi` (which already supports 8D3F since v7.4-rc1):
 
 - No direct EC writes; userspace only touches standard sysfs files.
 - Fans go manual before any profile switch; BIOS-auto fans are refused in Unleashed.
-- Four layers: kernel watchdog, systemd watchdog, rpm plausibility check, thermal
-  protection that lowers power. Every failure path ends with more cooling.
+- Four layers: kernel watchdog, systemd watchdog with a safety script after abnormal
+  exits, fan speed check, thermal protection that lowers power.
 
-## Build / test
+## Build and test
 
 ```bash
-cd app && cargo test -p omenctl-core
+cd app && cargo test      # unit tests + an end-to-end test of the service on a fake sysfs tree
 ```
 
 ## License
 
 GPL-2.0-or-later (the driver is derived from the Linux kernel's `hp-wmi.c`). See `LICENSE`.
+The bundled IBM Plex Sans font is under the SIL Open Font License 1.1
+(`app/omenctl-gui/assets/IBMPlexSans-LICENSE.txt`).
 
 ## References
 

@@ -46,7 +46,9 @@ chmod 644 "$SRC/dkms.conf"
 DOC="$PKG/usr/share/doc/omenctl"
 install -D -m644 "$TOP/docs/USER_GUIDE.md" "$DOC/USER_GUIDE.md"
 install -D -m644 "$TOP/docs/HARDWARE_TEST.md" "$DOC/HARDWARE_TEST.md"
-install -D -m644 "$TOP/README.md" "$DOC/README.md"
+# the language switch line links to README.zh-CN.md, which is not packaged
+grep -v '^English | \[' "$TOP/README.md" > "$DOC/README.md"
+chmod 644 "$DOC/README.md"
 install -D -m644 "$TOP/hpwmi-upstream/backport.patch" "$DOC/hp-wmi-backport.patch"
 install -D -m644 "$TOP/app/omenctl-gui/assets/IBMPlexSans-LICENSE.txt" "$DOC/IBMPlexSans-LICENSE.txt"
 if [ -e "$TOP/LICENSE" ]; then install -m644 "$TOP/LICENSE" "$DOC/copyright"; fi
@@ -65,7 +67,7 @@ Architecture: $ARCH
 Maintainer: Zerun Wang <213201277+ZerunW@users.noreply.github.com>
 Installed-Size: $SIZE
 Depends: dkms, libc6, libgcc-s1, libgl1, libxkbcommon0, libxkbcommon-x11-0, adduser
-Recommends: fonts-noto-cjk, linux-headers-generic-hwe-24.04
+Recommends: linux-headers-generic-hwe-24.04
 Section: utils
 Priority: optional
 Homepage: https://github.com/ZerunW/omen-ctl

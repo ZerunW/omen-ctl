@@ -12,3 +12,4 @@ hpwmi-upstream/commits.json
 # raw ACPI binaries (keep decompiled .dsl); never commit the Windows key table
 acpi/*.dat
 acpi/msdm*
+packaging/out/
