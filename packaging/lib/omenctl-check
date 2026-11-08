@@ -5,8 +5,16 @@ if [ "$board" != "8D3F" ]; then
 	echo "omenctl: board '$board' is not 8D3F, not starting" >&2
 	exit 1
 fi
-if [ ! -e /sys/devices/platform/hp-wmi/omenctl_kick ]; then
-	echo "omenctl: patched hp-wmi driver not loaded (no omenctl_kick); reboot or reload hp-wmi" >&2
-	exit 1
-fi
+# At boot hp-wmi is loaded asynchronously by udev, so the service can start before
+# the driver is ready. Wait up to 30 s instead of skipping on the first look
+# (a skipped unit is not retried by systemd).
+i=0
+while [ ! -e /sys/devices/platform/hp-wmi/omenctl_kick ]; do
+	if [ $i -ge 30 ]; then
+		echo "omenctl: patched hp-wmi driver not loaded (no omenctl_kick); reboot or reload hp-wmi" >&2
+		exit 1
+	fi
+	sleep 1
+	i=$((i + 1))
+done
 exit 0
