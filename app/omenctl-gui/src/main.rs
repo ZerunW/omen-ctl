@@ -1,35 +1,37 @@
 //! omenctl-gui: desktop front end for omenctld (runs as a normal user in the
-//! omenctl group). All changes go through the daemon; nothing here touches sysfs.
+//! omenctl group). All changes go through the service; nothing here touches sysfs.
 
 mod edit;
+mod theme;
 
-use eframe::egui;
+use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use omenctl_core::curve::{FanCurve, LEVEL_MAX, LEVEL_MIN};
 use omenctl_core::proto::{Client, Request, Response, Status, SOCKET_PATH};
 use omenctl_core::{FanMode, Mode};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use theme::{bold, font, ButtonKind, Palette};
 
 // ---------------------------------------------------------------- worker thread
 
 #[derive(Default)]
 struct Shared {
     status: Option<Status>,
-    /// Set while the daemon cannot be reached.
+    /// Set while the service cannot be reached.
     conn_err: Option<String>,
     /// Last refused request (shown for a few seconds).
     last_err: Option<(String, Instant)>,
-    /// Curves from the daemon (Some after a GetCurves/SetCurves answer).
+    /// Curves from the service (Some after a GetCurves answer).
     curves: Option<(FanCurve, FanCurve)>,
     /// Bumped on every curves answer so the editor knows to reload.
     curves_gen: u64,
 }
 
-/// Talks to the daemon: polls status every second and runs queued requests.
+/// Talks to the service: polls status every second and runs queued requests.
 fn worker(socket: String, rx: Receiver<Request>, shared: Arc<Mutex<Shared>>, ctx: egui::Context) {
     let mut client: Option<Client> = None;
-    let mut pending: Option<Request> = Some(Request::GetCurves);
+    let mut pending: Option<Request> = None;
     loop {
         let req = match pending.take() {
             Some(r) => r,
@@ -41,32 +43,52 @@ fn worker(socket: String, rx: Receiver<Request>, shared: Arc<Mutex<Shared>>, ctx
         };
         if client.is_none() {
             match Client::connect(&socket) {
-                Ok(c) => client = Some(c),
-                Err(e) => {
-                    let mut s = shared.lock().unwrap();
-                    s.conn_err = Some(e);
-                    s.status = None;
-                    drop(s);
-                    ctx.request_repaint();
-                    // keep the request (except plain polls) for the next attempt
-                    if !matches!(req, Request::Status) {
+                Ok(c) => {
+                    client = Some(c);
+                    // fetch the curves first after every (re)connect
+                    if !matches!(req, Request::GetCurves) {
                         pending = Some(req);
+                        continue_with(&mut client, Request::GetCurves, &shared, &ctx, &mut pending);
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    {
+                        let mut s = shared.lock().unwrap();
+                        s.conn_err = Some(e);
+                        s.status = None;
+                    }
+                    ctx.request_repaint();
+                    if !matches!(req, Request::Status) {
+                        pending = Some(req); // retry user requests after reconnecting
                     }
                     std::thread::sleep(Duration::from_secs(1));
                     continue;
                 }
             }
-            pending = Some(Request::GetCurves); // reload curves after (re)connect
         }
-        let is_set_curves = matches!(req, Request::SetCurves { .. });
-        let r = client.as_mut().unwrap().call(&req);
+        continue_with(&mut client, req, &shared, &ctx, &mut pending);
+    }
+}
+
+fn continue_with(
+    client: &mut Option<Client>,
+    req: Request,
+    shared: &Arc<Mutex<Shared>>,
+    ctx: &egui::Context,
+    pending: &mut Option<Request>,
+) {
+    let Some(c) = client.as_mut() else { return };
+    let is_set_curves = matches!(req, Request::SetCurves { .. });
+    let r = c.call(&req);
+    {
         let mut s = shared.lock().unwrap();
         match r {
             Ok(Response::Ok { status }) => {
                 s.status = Some(status);
                 s.conn_err = None;
-                if is_set_curves {
-                    pending = Some(Request::GetCurves);
+                if is_set_curves && pending.is_none() {
+                    *pending = Some(Request::GetCurves);
                 }
             }
             Ok(Response::Curves { cpu, gpu }) => {
@@ -78,46 +100,11 @@ fn worker(socket: String, rx: Receiver<Request>, shared: Arc<Mutex<Shared>>, ctx
             Err(e) => {
                 s.conn_err = Some(e);
                 s.status = None;
-                client = None;
+                *client = None;
             }
         }
-        drop(s);
-        ctx.request_repaint();
     }
-}
-
-// ---------------------------------------------------------------- fonts
-
-/// egui's built-in fonts have no Chinese glyphs: load a system CJK font.
-fn install_cjk_font(ctx: &egui::Context) -> bool {
-    // (path, face index). NotoSansCJK .ttc face 2 is Simplified Chinese.
-    const CANDIDATES: &[(&str, u32)] = &[
-        ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 2),
-        ("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 2),
-        ("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc", 2),
-        ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", 0),
-        ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", 0),
-        ("/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf", 0),
-        ("/usr/share/fonts/truetype/arphic/uming.ttc", 0),
-    ];
-    for &(path, index) in CANDIDATES {
-        if let Ok(bytes) = std::fs::read(path) {
-            let mut data = egui::FontData::from_owned(bytes);
-            data.index = index;
-            let fam = |family| egui::epaint::text::InsertFontFamily {
-                family,
-                priority: egui::epaint::text::FontPriority::Lowest,
-            };
-            ctx.add_font(egui::epaint::text::FontInsert::new(
-                "cjk",
-                data,
-                vec![fam(egui::FontFamily::Proportional), fam(egui::FontFamily::Monospace)],
-            ));
-            return true;
-        }
-    }
-    eprintln!("omenctl-gui: no CJK font found; install fonts-noto-cjk");
-    false
+    ctx.request_repaint();
 }
 
 // ---------------------------------------------------------------- app
@@ -131,13 +118,36 @@ enum Which {
 struct App {
     tx: Sender<Request>,
     shared: Arc<Mutex<Shared>>,
-    /// Curves being edited (None until the daemon answered).
+    /// Curves being edited (None until the service answered).
     edit: Option<(FanCurve, FanCurve)>,
     edit_gen: u64,
     dirty: bool,
     which: Which,
     dragging: Option<usize>,
-    fixed_level: u8,
+    /// Manual speed slider value (fan level, 100 rpm).
+    manual_level: u8,
+    /// True while the user is moving the slider (don't overwrite it from status).
+    manual_touched: bool,
+    curve_open: bool,
+}
+
+const MODES: [Mode; 3] = [Mode::PowerSaver, Mode::Balanced, Mode::Unleashed];
+
+fn rpm(level: u8) -> String {
+    format!("{} rpm", level as u32 * 100)
+}
+
+fn mode_caption(m: Mode) -> &'static str {
+    match m {
+        Mode::PowerSaver => "Lowest power and heat. Good for battery and light work.",
+        Mode::Balanced => "The system's standard power limits.",
+        Mode::Unleashed => "CPU 90 W sustained, 130 W boost. GPU up to 115 W. Fans are always software controlled.",
+    }
+}
+
+/// Alerts that mean something is wrong (red) rather than a caution (orange).
+fn is_severe(a: &str) -> bool {
+    a.contains("fault") || a.contains("overheat") || a.contains("unavailable")
 }
 
 impl App {
@@ -145,180 +155,281 @@ impl App {
         let _ = self.tx.send(r);
     }
 
-    fn mode_section(&self, ui: &mut egui::Ui, st: &Status) {
-        ui.heading("性能模式");
+    fn header(&self, ui: &mut egui::Ui, p: &Palette, connected: bool) {
         ui.horizontal(|ui| {
-            for (m, tip) in [
-                (Mode::PowerSaver, "低功耗，风扇默认按曲线"),
-                (Mode::Balanced, "系统默认档位"),
-                (Mode::Unleashed, "CPU 90/130 W，显卡上限 115 W；风扇必须由软件控制"),
-            ] {
-                let b = ui.add(egui::Button::selectable(st.mode == m, m.label_zh()).min_size(egui::vec2(90.0, 32.0)));
-                if b.on_hover_text(tip).clicked() && st.mode != m {
-                    self.send(Request::SetMode { mode: m });
-                }
+            ui.label(egui::RichText::new("OMEN Control").font(bold(26.0)).color(p.label));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let (txt, col) = if connected { ("Connected", p.green) } else { ("Offline", p.red) };
+                ui.label(egui::RichText::new(txt).font(font(12.0)).color(p.secondary));
+                let (r, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
+                ui.painter().circle_filled(r.center(), 4.0, col);
+            });
+        });
+        ui.label(egui::RichText::new("HP OMEN 16  ·  board 8D3F").font(font(12.0)).color(p.secondary));
+        ui.add_space(6.0);
+    }
+
+    fn performance(&self, ui: &mut egui::Ui, p: &Palette, st: &Status) {
+        theme::section_title(ui, p, "Performance");
+        theme::card(ui, p, |ui| {
+            let sel = MODES.iter().position(|m| *m == st.mode);
+            let labels: Vec<&str> = MODES.iter().map(|m| m.label()).collect();
+            let w = ui.available_width();
+            if let Some(i) = theme::segmented(ui, p, "mode", &labels, sel, &[true; 3], w) {
+                self.send(Request::SetMode { mode: MODES[i] });
+            }
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(mode_caption(st.mode)).font(font(12.0)).color(p.secondary));
+            if st.mode != st.effective_mode {
+                ui.label(
+                    egui::RichText::new(format!("Temporarily running as {} while protection is active.", st.effective_mode.label()))
+                        .font(font(12.0))
+                        .color(p.orange),
+                );
             }
         });
-        if st.mode != st.effective_mode {
-            ui.colored_label(
-                ui.visuals().warn_fg_color,
-                format!("当前实际运行：{}（保护中）", st.effective_mode.label_zh()),
-            );
+    }
+
+    fn live(&self, ui: &mut egui::Ui, p: &Palette, st: &Status) {
+        theme::section_title(ui, p, "Live");
+        let temp = |t: Option<f32>| t.map_or("–".into(), |t| format!("{t:.0}°"));
+        let watts = |w: Option<f32>| w.map_or("–".into(), |w| format!("{w:.1} W"));
+        let tiles: [(&str, String, String); 4] = [
+            ("CPU", temp(st.cpu_temp), watts(st.cpu_power_w)),
+            (
+                "GPU",
+                st.gpu_temp.map_or("Asleep".into(), |t| format!("{t:.0}°")),
+                if st.gpu_temp.is_some() { watts(st.gpu_power_w) } else { "Not in use".into() },
+            ),
+            ("CPU Fan", st.fan_rpm[0].map_or("–".into(), |r| r.to_string()), format!("rpm  ·  target {}", st.fan_target[0] as u32 * 100)),
+            ("GPU Fan", st.fan_rpm[1].map_or("–".into(), |r| r.to_string()), format!("rpm  ·  target {}", st.fan_target[1] as u32 * 100)),
+        ];
+        ui.columns(4, |cols| {
+            for (ui, (title, value, sub)) in cols.iter_mut().zip(tiles) {
+                theme::card(ui, p, |ui| {
+                    ui.label(egui::RichText::new(title).font(font(12.0)).color(p.secondary));
+                    ui.label(egui::RichText::new(value).font(bold(26.0)).color(p.label));
+                    ui.label(egui::RichText::new(sub).font(font(11.0)).color(p.secondary));
+                });
+            }
+        });
+        let power = st.ac_online.map_or("", |a| if a { "On AC power" } else { "On battery" });
+        if !power.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.label(egui::RichText::new(power).font(font(11.0)).color(p.secondary));
+            });
         }
     }
 
-    fn fan_section(&mut self, ui: &mut egui::Ui, st: &Status) {
-        ui.heading("风扇");
+    fn fans(&mut self, ui: &mut egui::Ui, p: &Palette, st: &Status) {
+        theme::section_title(ui, p, "Fans");
         let unleashed = st.effective_mode == Mode::Unleashed;
-        ui.horizontal(|ui| {
-            let auto = ui.add_enabled(!unleashed, egui::Button::selectable(st.fan == FanMode::Auto, "BIOS 自动"));
-            let auto = auto.on_disabled_hover_text("满血模式下不能用 BIOS 自动风扇（EC 会退出满血状态）");
-            if auto.clicked() {
-                self.send(Request::SetFan { fan: FanMode::Auto });
-            }
-            if ui.add(egui::Button::selectable(st.fan == FanMode::Curve, "曲线")).clicked() {
-                self.send(Request::SetFan { fan: FanMode::Curve });
-            }
-            let is_fixed = matches!(st.fan, FanMode::Fixed(_));
-            if ui.add(egui::Button::selectable(is_fixed, "固定转速")).clicked() {
-                self.send(Request::SetFan { fan: FanMode::Fixed(self.fixed_level) });
-            }
-            if ui.add(egui::Button::selectable(st.fan == FanMode::Max, "最高档")).clicked() {
-                self.send(Request::SetFan { fan: FanMode::Max });
-            }
-        });
         if let FanMode::Fixed(l) = st.fan {
-            if self.dragging.is_none() && !ui.ctx().egui_is_using_pointer() {
-                self.fixed_level = l;
+            if !self.manual_touched {
+                self.manual_level = l;
             }
         }
-        ui.horizontal(|ui| {
-            ui.label("固定转速：");
-            let r = ui.add(
-                egui::Slider::new(&mut self.fixed_level, LEVEL_MIN..=LEVEL_MAX)
-                    .custom_formatter(|v, _| format!("{} rpm", v as u32 * 100)),
+        theme::card(ui, p, |ui| {
+            // row 1: fan control mode
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Fan Control").font(font(13.0)));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let sel = match st.fan {
+                        FanMode::Auto => 0,
+                        FanMode::Curve => 1,
+                        FanMode::Fixed(_) => 2,
+                        FanMode::Max => 3,
+                    };
+                    let w = ui.available_width().min(340.0);
+                    let choice = theme::segmented(ui, p, "fan", &["Auto", "Curve", "Manual", "Max"], Some(sel), &[!unleashed, true, true, true], w);
+                    match choice {
+                        Some(0) => self.send(Request::SetFan { fan: FanMode::Auto }),
+                        Some(1) => self.send(Request::SetFan { fan: FanMode::Curve }),
+                        Some(2) => self.send(Request::SetFan { fan: FanMode::Fixed(self.manual_level) }),
+                        Some(3) => self.send(Request::SetFan { fan: FanMode::Max }),
+                        _ => {}
+                    }
+                });
+            });
+            let caption = match st.fan {
+                FanMode::Auto => "The BIOS controls the fans.",
+                FanMode::Curve => "Fans follow the fan curve for the hotter of CPU and GPU.",
+                FanMode::Fixed(_) => "Both fans run at the manual speed below.",
+                FanMode::Max => "Both fans at full speed.",
+            };
+            ui.label(egui::RichText::new(caption).font(font(12.0)).color(p.secondary));
+            if unleashed {
+                ui.label(egui::RichText::new("Auto is not available in Unleashed mode.").font(font(12.0)).color(p.secondary));
+            }
+
+            theme::separator(ui, p);
+
+            // row 2: manual speed
+            let rec = st.fan_recommended;
+            let rec_max = rec[0].max(rec[1]).max(LEVEL_MIN);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Manual Speed").font(font(13.0)));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_sized(
+                        Vec2::new(80.0, 20.0),
+                        egui::Label::new(egui::RichText::new(rpm(self.manual_level)).font(bold(13.0))),
+                    );
+                    let w = ui.available_width().min(340.0);
+                    let (holding, commit) =
+                        theme::level_slider(ui, p, &mut self.manual_level, (LEVEL_MIN, LEVEL_MAX), Some(rec_max), w);
+                    self.manual_touched = holding;
+                    if commit {
+                        self.manual_touched = false;
+                        self.send(Request::SetFan { fan: FanMode::Fixed(self.manual_level) });
+                    }
+                });
+            });
+            let t = st.cpu_temp.map(|c| st.gpu_temp.map_or(c, |g| c.max(g)));
+            let at = t.map_or(String::new(), |t| format!(" at {t:.0} °C"));
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(Vec2::new(10.0, 14.0), Sense::hover());
+                ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(2.0, p.orange));
+                ui.label(
+                    egui::RichText::new(format!("Recommended{at}: CPU fan {}, GPU fan {}", rpm(rec[0]), rpm(rec[1])))
+                        .font(font(12.0))
+                        .color(p.secondary),
+                );
+            });
+            let showing_manual = matches!(st.fan, FanMode::Fixed(_)) || self.manual_touched;
+            if showing_manual && self.manual_level < rec_max {
+                ui.add_space(4.0);
+                theme::banner(
+                    ui,
+                    p,
+                    p.orange,
+                    "Below recommended.",
+                    &format!(
+                        "{} is lower than the fan curve suggests for the current temperature ({}). The system may run hotter. Protection still takes over at high temperatures.",
+                        rpm(self.manual_level),
+                        rpm(rec_max)
+                    ),
+                );
+            }
+        });
+    }
+
+    fn curve(&mut self, ui: &mut egui::Ui, p: &Palette, st: Option<&Status>) {
+        ui.add_space(14.0);
+        theme::card(ui, p, |ui| {
+            // disclosure row
+            let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::click());
+            if resp.clicked() {
+                self.curve_open = !self.curve_open;
+            }
+            let open = ui.ctx().animate_bool_with_time(egui::Id::unique("curve_open"), self.curve_open, 0.18);
+            let painter = ui.painter();
+            theme::chevron(painter, Pos2::new(row.left() + 6.0, row.center().y), open, p.secondary);
+            painter.text(Pos2::new(row.left() + 20.0, row.center().y), egui::Align2::LEFT_CENTER, "Fan Curve", bold(13.0), p.label);
+            let right = if self.dirty { "Unsaved changes" } else { "Used in Curve mode  ·  default: BIOS table" };
+            painter.text(
+                Pos2::new(row.right(), row.center().y),
+                egui::Align2::RIGHT_CENTER,
+                right,
+                font(12.0),
+                if self.dirty { p.orange } else { p.secondary },
             );
-            // apply when the user lets go (or after keyboard change), not on every pixel
-            if (r.drag_stopped() || (r.changed() && !r.dragged())) && matches!(st.fan, FanMode::Fixed(_)) {
-                self.send(Request::SetFan { fan: FanMode::Fixed(self.fixed_level) });
+            if open <= 0.0 {
+                return;
             }
+            ui.add_space(8.0);
+            self.curve_body(ui, p, st);
         });
     }
 
-    fn live_section(&self, ui: &mut egui::Ui, st: &Status) {
-        ui.heading("实时数据");
-        let f = |v: Option<f32>, unit: &str, dec: usize| v.map_or("—".to_string(), |v| format!("{v:.dec$} {unit}"));
-        egui::Grid::new("live").num_columns(3).spacing([24.0, 6.0]).striped(true).show(ui, |ui| {
-            ui.label("");
-            ui.strong("CPU");
-            ui.strong("显卡");
-            ui.end_row();
-            ui.label("温度");
-            ui.label(f(st.cpu_temp, "°C", 0));
-            ui.label(st.gpu_temp.map_or("休眠 / 无数据".into(), |t| format!("{t:.0} °C")));
-            ui.end_row();
-            ui.label("功率");
-            ui.label(f(st.cpu_power_w, "W", 1));
-            ui.label(f(st.gpu_power_w, "W", 1));
-            ui.end_row();
-            ui.label("风扇转速");
-            ui.label(st.fan_rpm[0].map_or("—".into(), |r| format!("{r} rpm")));
-            ui.label(st.fan_rpm[1].map_or("—".into(), |r| format!("{r} rpm")));
-            ui.end_row();
-            ui.label("风扇目标");
-            ui.label(format!("{} rpm", st.fan_target[0] as u32 * 100));
-            ui.label(format!("{} rpm", st.fan_target[1] as u32 * 100));
-            ui.end_row();
-            ui.label("电源");
-            ui.label(st.ac_online.map_or("—", |a| if a { "已接通" } else { "电池" }));
-            ui.end_row();
-        });
-        if !st.alerts.is_empty() {
-            ui.add_space(6.0);
-            for a in &st.alerts {
-                ui.colored_label(ui.visuals().error_fg_color, format!("⚠ {a}"));
-            }
-        }
-    }
-
-    fn curve_section(&mut self, ui: &mut egui::Ui, st: Option<&Status>) {
-        ui.heading("风扇曲线");
+    fn curve_body(&mut self, ui: &mut egui::Ui, p: &Palette, st: Option<&Status>) {
         let Some((cpu, gpu)) = self.edit.as_mut() else {
-            ui.label("正在读取曲线…");
+            ui.label(egui::RichText::new("Loading…").color(p.secondary));
             return;
         };
+        let sel = if self.which == Which::Cpu { 0 } else { 1 };
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.which, Which::Cpu, "CPU 风扇");
-            ui.selectable_value(&mut self.which, Which::Gpu, "显卡风扇");
-            ui.label("（横轴：CPU 和显卡中较高的温度；纵轴：转速）");
+            if let Some(i) = theme::segmented(ui, p, "which", &["CPU Fan", "GPU Fan"], Some(sel), &[true, true], 200.0) {
+                self.which = if i == 0 { Which::Cpu } else { Which::Gpu };
+            }
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Drag the points. X: hotter of CPU and GPU. Y: fan speed.").font(font(12.0)).color(p.secondary));
         });
+        ui.add_space(6.0);
         let curve = if self.which == Which::Cpu { cpu } else { gpu };
 
-        let size = egui::vec2(ui.available_width().min(720.0), 300.0);
-        let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
-        let plot = rect.shrink2(egui::vec2(44.0, 22.0));
+        let size = Vec2::new(ui.available_width(), 260.0);
+        let (rect, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
+        let plot = Rect::from_min_max(rect.min + Vec2::new(46.0, 10.0), rect.max - Vec2::new(10.0, 24.0));
         let to_screen = |t: f32, l: f32| {
-            egui::pos2(
+            Pos2::new(
                 plot.left() + (t - edit::T_MIN) / (edit::T_MAX - edit::T_MIN) * plot.width(),
                 plot.bottom() - (l - LEVEL_MIN as f32) / (LEVEL_MAX - LEVEL_MIN) as f32 * plot.height(),
             )
         };
-        let from_screen = |p: egui::Pos2| {
+        let from_screen = |q: Pos2| {
             (
-                edit::T_MIN + (p.x - plot.left()) / plot.width() * (edit::T_MAX - edit::T_MIN),
-                LEVEL_MIN as f32 + (plot.bottom() - p.y) / plot.height() * (LEVEL_MAX - LEVEL_MIN) as f32,
+                edit::T_MIN + (q.x - plot.left()) / plot.width() * (edit::T_MAX - edit::T_MIN),
+                LEVEL_MIN as f32 + (plot.bottom() - q.y) / plot.height() * (LEVEL_MAX - LEVEL_MIN) as f32,
             )
         };
-        let v = ui.visuals().clone();
         let painter = ui.painter_at(rect);
-        painter.rect_filled(plot, 2.0, v.extreme_bg_color);
-        let grid = egui::Stroke::new(1.0, v.weak_text_color().gamma_multiply(0.3));
-        let font = egui::FontId::proportional(11.0);
+        let grid = Stroke::new(1.0, p.separator);
         for t in (20..=100).step_by(10) {
             let x = to_screen(t as f32, 0.0).x;
-            painter.line_segment([egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())], grid);
-            painter.text(egui::pos2(x, plot.bottom() + 4.0), egui::Align2::CENTER_TOP, format!("{t}°C"), font.clone(), v.weak_text_color());
+            painter.line_segment([Pos2::new(x, plot.top()), Pos2::new(x, plot.bottom())], grid);
+            painter.text(Pos2::new(x, plot.bottom() + 6.0), egui::Align2::CENTER_TOP, format!("{t}°"), font(11.0), p.secondary);
         }
         for l in [18u8, 25, 30, 35, 40, 45, 52] {
             let y = to_screen(0.0, l as f32).y;
-            painter.line_segment([egui::pos2(plot.left(), y), egui::pos2(plot.right(), y)], grid);
-            painter.text(egui::pos2(plot.left() - 4.0, y), egui::Align2::RIGHT_CENTER, format!("{}", l as u32 * 100), font.clone(), v.weak_text_color());
+            painter.line_segment([Pos2::new(plot.left(), y), Pos2::new(plot.right(), y)], grid);
+            painter.text(Pos2::new(plot.left() - 8.0, y), egui::Align2::RIGHT_CENTER, format!("{}", l as u32 * 100), font(11.0), p.secondary);
         }
-        // protection threshold
+
+        // area under the curve (convex quads) and the line
+        let mut pts = vec![(edit::T_MIN, curve.points[0].level as f32)];
+        pts.extend(curve.points.iter().map(|q| (q.temp, q.level as f32)));
+        pts.push((edit::T_MAX, curve.points.last().unwrap().level as f32));
+        let fill = p.blue.gamma_multiply(if p.dark { 0.22 } else { 0.12 });
+        for w in pts.windows(2) {
+            let a = to_screen(w[0].0, w[0].1);
+            let b = to_screen(w[1].0, w[1].1);
+            painter.add(egui::Shape::convex_polygon(
+                vec![a, b, Pos2::new(b.x, plot.bottom()), Pos2::new(a.x, plot.bottom())],
+                fill,
+                Stroke::NONE,
+            ));
+        }
+        let line: Vec<Pos2> = pts.iter().map(|&(t, l)| to_screen(t, l)).collect();
+        painter.add(egui::Shape::line(line, Stroke::new(2.5, p.blue)));
+
+        // current temperature
         if let Some(st) = st {
-            let hot = st.cpu_temp.map(|c| st.gpu_temp.map_or(c, |g| c.max(g)));
-            if let Some(t) = hot {
+            if let Some(t) = st.cpu_temp.map(|c| st.gpu_temp.map_or(c, |g| c.max(g))) {
                 let x = to_screen(t.clamp(edit::T_MIN, edit::T_MAX), 0.0).x;
-                painter.line_segment(
-                    [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
-                    egui::Stroke::new(1.5, v.warn_fg_color),
-                );
-                painter.text(egui::pos2(x + 3.0, plot.top() + 2.0), egui::Align2::LEFT_TOP, format!("当前 {t:.0}°C"), font.clone(), v.warn_fg_color);
+                painter.extend(egui::Shape::dashed_line(&[Pos2::new(x, plot.top()), Pos2::new(x, plot.bottom())], Stroke::new(1.5, p.orange), 4.0, 3.0));
+                painter.text(Pos2::new(x + 5.0, plot.top() + 2.0), egui::Align2::LEFT_TOP, format!("Now {t:.0}°"), font(11.0), p.orange);
             }
         }
-        // curve (flat before the first and after the last point)
-        let mut line = vec![to_screen(edit::T_MIN, curve.points[0].level as f32)];
-        line.extend(curve.points.iter().map(|p| to_screen(p.temp, p.level as f32)));
-        line.push(to_screen(edit::T_MAX, curve.points.last().unwrap().level as f32));
-        let accent = v.selection.bg_fill;
-        painter.add(egui::Shape::line(line, egui::Stroke::new(2.0, accent)));
 
         // dragging
         if resp.drag_started() {
-            if let Some(p) = resp.interact_pointer_pos() {
+            // where the button went down, not where the drag threshold was crossed
+            let origin = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos());
+            if let Some(q) = origin {
                 self.dragging = curve
                     .points
                     .iter()
                     .enumerate()
-                    .map(|(i, q)| (i, to_screen(q.temp, q.level as f32).distance(p)))
-                    .filter(|(_, d)| *d < 12.0)
+                    .map(|(i, c)| (i, to_screen(c.temp, c.level as f32).distance(q)))
+                    .filter(|(_, d)| *d < 14.0)
                     .min_by(|a, b| a.1.total_cmp(&b.1))
                     .map(|(i, _)| i);
             }
         }
-        if let (Some(i), Some(p)) = (self.dragging, resp.interact_pointer_pos()) {
+        if let (Some(i), Some(q)) = (self.dragging, resp.interact_pointer_pos()) {
             if resp.dragged() {
-                let (t, l) = from_screen(p);
+                let (t, l) = from_screen(q);
                 edit::drag_point(&mut curve.points, i, t, l);
                 self.dirty = true;
             }
@@ -327,39 +438,54 @@ impl App {
             self.dragging = None;
         }
         let hover = resp.hover_pos();
-        for (i, q) in curve.points.iter().enumerate() {
-            let c = to_screen(q.temp, q.level as f32);
-            let hot = self.dragging == Some(i) || hover.is_some_and(|h| h.distance(c) < 12.0);
-            painter.circle_filled(c, if hot { 7.0 } else { 5.0 }, accent);
+        let mut tip = None;
+        for (i, c) in curve.points.iter().enumerate() {
+            let at = to_screen(c.temp, c.level as f32);
+            let hot = self.dragging == Some(i) || (self.dragging.is_none() && hover.is_some_and(|h| h.distance(at) < 14.0));
+            let r = if hot { 7.0 } else { 5.5 };
+            if !p.dark {
+                painter.circle_filled(at + Vec2::new(0.0, 1.0), r + 0.5, p.shadow);
+            }
+            painter.circle_filled(at, r, Color32::WHITE);
+            painter.circle_stroke(at, r, Stroke::new(2.0, p.blue));
             if hot {
-                painter.text(c + egui::vec2(8.0, -8.0), egui::Align2::LEFT_BOTTOM, format!("{:.1}°C → {} rpm", q.temp, q.level as u32 * 100), font.clone(), v.strong_text_color());
+                tip = Some((at, format!("{:.1}°  →  {}", c.temp, rpm(c.level))));
             }
         }
+        if let Some((at, text)) = tip {
+            let g = painter.layout_no_wrap(text, font(12.0), Color32::WHITE);
+            let size = g.size() + Vec2::new(16.0, 8.0);
+            let mut r = Rect::from_min_size(Pos2::new(at.x - size.x / 2.0, at.y - size.y - 12.0), size);
+            r = r.translate(Vec2::new((plot.left() - r.left()).max(0.0) + (plot.right() - r.right()).min(0.0), (rect.top() - r.top()).max(0.0)));
+            painter.rect_filled(r, 6.0, Color32::from_black_alpha(200));
+            painter.galley(r.min + Vec2::new(8.0, 4.0), g, Color32::WHITE);
+        }
 
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.add_enabled(self.dirty, egui::Button::new("保存并应用")).clicked() {
-                if let Some((c, g)) = &self.edit {
-                    let _ = self.tx.send(Request::SetCurves { cpu: c.clone(), gpu: g.clone() });
-                    self.dirty = false;
-                }
-            }
-            if ui.add_enabled(self.dirty, egui::Button::new("放弃修改")).clicked() {
-                self.edit_gen = 0; // reload from the daemon's copy on the next frame
-                self.dirty = false;
-            }
-            if ui.button("恢复 BIOS 默认曲线").on_hover_text("只改编辑器里的曲线，点“保存并应用”后才生效").clicked() {
+            if theme::button(ui, p, "Restore Defaults", ButtonKind::Secondary, true) {
                 self.edit = Some((FanCurve::bios_default_cpu(), FanCurve::bios_default_gpu()));
                 self.dirty = true;
             }
-            if self.dirty {
-                ui.colored_label(ui.visuals().warn_fg_color, "有未保存的修改");
+            if theme::button(ui, p, "Revert", ButtonKind::Secondary, self.dirty) {
+                self.edit_gen = 0; // reload the service's copy on the next frame
+                self.dirty = false;
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if theme::button(ui, p, "Apply", ButtonKind::Primary, self.dirty) {
+                    if let Some((c, g)) = &self.edit {
+                        let _ = self.tx.send(Request::SetCurves { cpu: c.clone(), gpu: g.clone() });
+                        self.dirty = false;
+                    }
+                }
+            });
         });
     }
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let p = theme::palette(ui.ctx());
         let (status, conn_err, last_err, curves, gen) = {
             let mut s = self.shared.lock().unwrap();
             if s.last_err.as_ref().is_some_and(|(_, t)| t.elapsed() > Duration::from_secs(8)) {
@@ -367,7 +493,7 @@ impl eframe::App for App {
             }
             (s.status.clone(), s.conn_err.clone(), s.last_err.as_ref().map(|e| e.0.clone()), s.curves.clone(), s.curves_gen)
         };
-        // take the daemon's curves unless the user is in the middle of editing
+        // take the service's curves unless the user is editing
         if gen != self.edit_gen && !self.dirty && self.dragging.is_none() {
             if let Some(c) = curves {
                 self.edit = Some(c);
@@ -378,61 +504,76 @@ impl eframe::App for App {
             ui.ctx().request_repaint_after(Duration::from_secs(1));
         }
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                if let Some(e) = &conn_err {
-                    ui.colored_label(ui.visuals().error_fg_color, e);
-                    ui.separator();
-                }
-                if let Some(e) = &last_err {
-                    ui.colored_label(ui.visuals().error_fg_color, format!("操作被拒绝：{e}"));
-                    ui.separator();
-                }
-                match &status {
-                    Some(st) => {
-                        ui.columns(2, |cols| {
-                            self.mode_section(&mut cols[0], st);
-                            cols[0].add_space(10.0);
-                            self.fan_section(&mut cols[0], st);
-                            self.live_section(&mut cols[1], st);
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin::symmetric(24, 20)))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    let w = ui.available_width().min(780.0);
+                    let pad = (ui.available_width() - w) / 2.0;
+                    ui.horizontal(|ui| {
+                        ui.add_space(pad);
+                        ui.vertical(|ui| {
+                            ui.set_width(w);
+                            self.header(ui, &p, status.is_some());
+                            if let Some(e) = &conn_err {
+                                theme::banner(ui, &p, p.red, "Service unavailable.", e);
+                            }
+                            if let Some(e) = &last_err {
+                                theme::banner(ui, &p, p.red, "Request refused.", e);
+                            }
+                            if let Some(st) = &status {
+                                // the manual-speed warning is shown inline next to the slider
+                                for a in st.alerts.iter().filter(|a| !a.contains("below the recommended")) {
+                                    let (col, title) = if is_severe(a) { (p.red, "Warning.") } else { (p.orange, "Note.") };
+                                    theme::banner(ui, &p, col, title, a);
+                                }
+                                self.performance(ui, &p, st);
+                                self.live(ui, &p, st);
+                                self.fans(ui, &p, st);
+                            } else if conn_err.is_none() {
+                                ui.label(egui::RichText::new("Connecting to the omenctl service…").color(p.secondary));
+                            }
+                            self.curve(ui, &p, status.as_ref());
+                            ui.add_space(12.0);
                         });
-                    }
-                    None => {
-                        ui.label("正在连接后台服务…");
-                    }
-                }
-                ui.separator();
-                self.curve_section(ui, status.as_ref());
+                    });
+                });
             });
-        });
     }
 }
 
+const USAGE: &str = "usage: omenctl-gui [--socket PATH] [--theme system|light|dark]";
+
 fn main() -> eframe::Result {
     let mut socket = SOCKET_PATH.to_string();
+    let mut theme_pref = egui::ThemePreference::System;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
-        match a.as_str() {
-            "--socket" => socket = it.next().unwrap_or(socket),
+        match (a.as_str(), it.next()) {
+            ("--socket", Some(s)) => socket = s,
+            ("--theme", Some(t)) if t == "light" => theme_pref = egui::ThemePreference::Light,
+            ("--theme", Some(t)) if t == "dark" => theme_pref = egui::ThemePreference::Dark,
+            ("--theme", Some(t)) if t == "system" => {}
             _ => {
-                eprintln!("usage: omenctl-gui [--socket PATH]");
+                eprintln!("{USAGE}");
                 std::process::exit(2);
             }
         }
     }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("OMEN 控制")
+            .with_title("OMEN Control")
             .with_app_id("omenctl-gui")
-            .with_inner_size([820.0, 720.0])
-            .with_min_inner_size([600.0, 500.0]),
+            .with_inner_size([860.0, 760.0])
+            .with_min_inner_size([680.0, 520.0]),
         ..Default::default()
     };
     eframe::run_native(
         "omenctl-gui",
         options,
         Box::new(move |cc| {
-            install_cjk_font(&cc.egui_ctx);
+            theme::install(&cc.egui_ctx);
+            cc.egui_ctx.set_theme(theme_pref);
             let shared = Arc::new(Mutex::new(Shared::default()));
             let (tx, rx) = channel();
             let ctx = cc.egui_ctx.clone();
@@ -446,7 +587,9 @@ fn main() -> eframe::Result {
                 dirty: false,
                 which: Which::Cpu,
                 dragging: None,
-                fixed_level: 30,
+                manual_level: 30,
+                manual_touched: false,
+                curve_open: false,
             }))
         }),
     )

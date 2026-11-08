@@ -40,18 +40,18 @@ impl Mode {
 
     pub fn parse(s: &str) -> Option<Mode> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "saver" | "power-saver" | "power_saver" | "eco" | "省电" => Some(Mode::PowerSaver),
-            "balanced" | "平衡" => Some(Mode::Balanced),
-            "unleashed" | "performance" | "max" | "满血" => Some(Mode::Unleashed),
+            "saver" | "power-saver" | "power_saver" | "eco" => Some(Mode::PowerSaver),
+            "balanced" => Some(Mode::Balanced),
+            "unleashed" | "performance" | "max" => Some(Mode::Unleashed),
             _ => None,
         }
     }
 
-    pub fn label_zh(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
-            Mode::PowerSaver => "省电",
-            Mode::Balanced => "平衡",
-            Mode::Unleashed => "满血",
+            Mode::PowerSaver => "Power Saver",
+            Mode::Balanced => "Balanced",
+            Mode::Unleashed => "Unleashed",
         }
     }
 }

@@ -1,9 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=OMEN Control
-Name[zh_CN]=OMEN 控制
-Comment=Performance mode and fan control for HP OMEN 16 (8D3F)
-Comment[zh_CN]=HP OMEN 16（8D3F）性能模式与风扇控制
+Comment=Performance mode and fan control for HP OMEN 16 (board 8D3F)
 Exec=omenctl-gui
 Icon=preferences-system
 Terminal=false

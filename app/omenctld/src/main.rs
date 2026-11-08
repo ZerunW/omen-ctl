@@ -154,9 +154,9 @@ impl<H: Hw> Daemon<H> {
 
     /// Validate, write the config file, then apply. Nothing changes if any step fails.
     fn set_curves(&mut self, cpu: omenctl_core::curve::FanCurve, gpu: omenctl_core::curve::FanCurve) -> Result<(), String> {
-        let cpu = cpu.validated().map_err(|e| format!("CPU 曲线：{e}"))?;
-        let gpu = gpu.validated().map_err(|e| format!("显卡曲线：{e}"))?;
-        files::save_curves(&self.config_path, &cpu, &gpu).map_err(|e| format!("写配置失败：{e}"))?;
+        let cpu = cpu.validated().map_err(|e| format!("CPU fan curve: {e}"))?;
+        let gpu = gpu.validated().map_err(|e| format!("GPU fan curve: {e}"))?;
+        files::save_curves(&self.config_path, &cpu, &gpu).map_err(|e| format!("cannot write the config file: {e}"))?;
         self.ctl.set_curves(cpu, gpu)?;
         Ok(())
     }

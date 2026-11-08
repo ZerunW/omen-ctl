@@ -44,8 +44,8 @@ chmod 644 "$SRC/dkms.conf"
 
 # docs
 DOC="$PKG/usr/share/doc/omenctl"
-install -D -m644 "$TOP/docs/使用说明.md" "$DOC/使用说明.md"
-install -D -m644 "$TOP/docs/测试清单.md" "$DOC/测试清单.md"
+install -D -m644 "$TOP/docs/USER_GUIDE.md" "$DOC/USER_GUIDE.md"
+install -D -m644 "$TOP/docs/HARDWARE_TEST.md" "$DOC/HARDWARE_TEST.md"
 install -D -m644 "$TOP/README.md" "$DOC/README.md"
 install -D -m644 "$TOP/hpwmi-upstream/backport.patch" "$DOC/hp-wmi-backport.patch"
 if [ -e "$TOP/LICENSE" ]; then install -m644 "$TOP/LICENSE" "$DOC/copyright"; fi

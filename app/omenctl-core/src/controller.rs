@@ -242,10 +242,10 @@ impl<H: Hw> Controller<H> {
     pub fn set_fan(&mut self, fan: FanMode, now: f64) -> Result<(), String> {
         let fan = match fan {
             FanMode::Fixed(l) if !(LEVEL_MIN..=LEVEL_MAX).contains(&l) => {
-                return Err(format!("固定档位必须在 {LEVEL_MIN}–{LEVEL_MAX} 之间（单位 100 rpm）"))
+                return Err(format!("fixed fan level must be {LEVEL_MIN}-{LEVEL_MAX} (units of 100 rpm)"))
             }
             FanMode::Auto if self.effective_mode == Mode::Unleashed => {
-                return Err("满血模式下不能用 BIOS 自动风扇（EC 会退出满血状态）".into())
+                return Err("BIOS automatic fans are not allowed in Unleashed mode (the EC would leave the Unleashed state)".into())
             }
             f => f,
         };
@@ -275,7 +275,7 @@ impl<H: Hw> Controller<H> {
             if self.applied_profile.as_deref().is_some_and(|a| a != cur) {
                 match Mode::from_platform_profile(&cur) {
                     Some(m) if !self.protect_drop => {
-                        self.errors.push(format!("外部切换了模式：{cur}"));
+                        self.errors.push(format!("platform profile was changed externally to {cur}"));
                         self.set_mode(m, now);
                     }
                     _ => {
@@ -341,8 +341,11 @@ impl<H: Hw> Controller<H> {
                 let since = *self.rpm_bad_since.get_or_insert(now);
                 if now - since >= p.rpm_fail_after_s as f64 && self.fault.is_none() {
                     self.fault = Some(format!(
-                        "风扇转速异常：目标 {}/{} rpm，实际 {:?}/{:?}",
-                        w[0] as u32 * 100, w[1] as u32 * 100, s.fan_rpm[0], s.fan_rpm[1]
+                        "fan speed fault: target {}/{} rpm, measured {}/{} rpm; fans forced to maximum",
+                        w[0] as u32 * 100,
+                        w[1] as u32 * 100,
+                        s.fan_rpm[0].map_or("?".into(), |r| r.to_string()),
+                        s.fan_rpm[1].map_or("?".into(), |r| r.to_string())
                     ));
                     if self.effective_mode == Mode::Unleashed {
                         self.apply_mode(Mode::Balanced, now);
@@ -364,17 +367,42 @@ impl<H: Hw> Controller<H> {
         self.status()
     }
 
+    /// Levels the curves give for the current temperature, without smoothing
+    /// (both fans at maximum while the CPU temperature is unknown).
+    pub fn recommended(&self) -> [u8; 2] {
+        match Self::temp(&self.last_sensors) {
+            Some(t) => [self.cfg.fan.cpu_curve.eval(t), self.cfg.fan.gpu_curve.eval(t)],
+            None => [LEVEL_MAX, LEVEL_MAX],
+        }
+    }
+
     pub fn status(&self) -> Status {
         let s = &self.last_sensors;
         let mut alerts = self.errors.clone();
+        let rec = self.recommended();
+        if let FanMode::Fixed(l) = self.fan_mode {
+            if l < rec[0] || l < rec[1] {
+                alerts.push(format!(
+                    "fixed fan speed {} rpm is below the recommended {} rpm (CPU fan) / {} rpm (GPU fan) at {}",
+                    l as u32 * 100,
+                    rec[0] as u32 * 100,
+                    rec[1] as u32 * 100,
+                    Self::temp(s).map_or("unknown temperature".into(), |t| format!("{t:.0} °C"))
+                ));
+            }
+        }
         if let Some(f) = &self.fault {
             alerts.push(f.clone());
         }
         if self.protect_drop {
-            alerts.push(format!("过热保护：已暂时退出{}，降到 {}°C 以下后恢复", self.user_mode.label_zh(), self.cfg.protect.restore_below));
+            alerts.push(format!(
+                "overheat protection: {} paused, resumes below {} °C",
+                self.user_mode.label(),
+                self.cfg.protect.restore_below
+            ));
         }
         if s.cpu_temp.is_none() {
-            alerts.push("读不到 CPU 温度，风扇已拉满".into());
+            alerts.push("CPU temperature unavailable: fans at maximum".into());
         }
         Status {
             mode: self.user_mode,
@@ -384,6 +412,7 @@ impl<H: Hw> Controller<H> {
             gpu_temp: s.gpu_temp,
             fan_rpm: s.fan_rpm,
             fan_target: self.target,
+            fan_recommended: rec,
             cpu_power_w: None,
             gpu_power_w: None,
             ac_online: s.ac_online,
@@ -582,11 +611,11 @@ mod tests {
             c.tick(t as f64);
         }
         let st = c.status();
-        assert!(st.alerts.iter().any(|a| a.contains("风扇转速异常")), "{:?}", st.alerts);
+        assert!(st.alerts.iter().any(|a| a.contains("fan speed fault")), "{:?}", st.alerts);
         assert_eq!(st.fan_target, [52, 52]);
         assert_eq!(c.hw.profile, "balanced");
         c.set_mode(Mode::Unleashed, 40.0);
-        assert!(c.status().alerts.iter().all(|a| !a.contains("风扇转速异常")));
+        assert!(c.status().alerts.iter().all(|a| !a.contains("fan speed fault")));
     }
 
     #[test]
@@ -664,6 +693,22 @@ mod tests {
         let bad = FanCurve { points: vec![CurvePoint { temp: 50.0, level: 30 }] };
         assert!(c.set_curves(bad, flat(30)).is_err());
         assert_eq!(c.curves().0, &cpu, "failed update leaves old curve");
+    }
+
+    #[test]
+    fn fixed_speed_below_recommended_warns_but_is_applied() {
+        let mut c = ctl(70.0, Mode::Balanced, FanMode::Curve);
+        let st = c.tick(1.0);
+        let rec = st.fan_recommended;
+        assert_eq!(rec, [c.curves().0.eval(70.0), c.curves().1.eval(70.0)]);
+        assert!(st.alerts.is_empty(), "{:?}", st.alerts);
+        c.set_fan(FanMode::Fixed(20), 2.0).unwrap();
+        let st = c.tick(3.0);
+        assert_eq!(st.fan_target, [20, 20], "user choice is respected");
+        assert!(st.alerts.iter().any(|a| a.contains("below the recommended")), "{:?}", st.alerts);
+        c.set_fan(FanMode::Fixed(52), 4.0).unwrap();
+        let st = c.tick(5.0);
+        assert!(st.alerts.is_empty(), "{:?}", st.alerts);
     }
 
     #[test]

@@ -1,36 +1,43 @@
-# omenctl 配置文件（/etc/omenctl/config.toml）
-# 每一项都有安全的默认值；删掉某一行就等于用默认值。
-# 改完后执行 sudo systemctl restart omenctld 生效。
-# 配置有错误时服务会拒绝启动（看 journalctl -u omenctld），机器保持安全状态。
+# omenctl configuration (/etc/omenctl/config.toml)
+# Every setting has a safe default; deleting a line means "use the default".
+# Apply changes with: sudo systemctl restart omenctld
+# If this file is invalid the service refuses to start (see journalctl -u omenctld)
+# and the machine stays in its safe state.
 
-# 没有保存过状态时（第一次启动）使用的模式：power_saver / balanced / unleashed
+# Mode used on the very first start (before any mode was saved):
+# power_saver, balanced or unleashed
 default_mode = "balanced"
 
-# 满血模式下写入 CPU+显卡并发功率 75 W（显卡上限因此到 115 W）
+# In Unleashed mode, set the CPU+GPU concurrent power target to 75 W
+# (this raises the GPU power limit to 115 W)
 unleashed_concurrent_75w = true
 
 [rapl]
-# 可选：每个模式额外写 intel_rapl 的 PL1/PL2（单位 W，要求 0 < PL1 <= PL2 <= 130）。
-# 不写 = 不动 RAPL。例：
+# Optional: also write intel_rapl PL1/PL2 per mode, in watts
+# (0 < PL1 <= PL2 <= 130). Not set = RAPL is left alone. Example:
 # balanced = [35, 45]
 
 [fan]
-# 降温平滑系数（0.01–1）：每秒向下走剩余差距的这个比例；升温立即跟随。
+# Fall smoothing (0.01-1): each second the fan level moves down by this share
+# of the remaining gap; rising temperatures are followed immediately.
 fall = 0.4
-# BIOS 风扇表最高档（8D3F 固定 52，即 5200 rpm），不要改。
+# Top level of the BIOS fan table (52 = 5200 rpm on 8D3F). Do not change.
 table_max = 52
-# 风扇曲线 [fan.cpu_curve] / [fan.gpu_curve] 不写时用内置的 BIOS 默认表。
-# 在图形界面里保存曲线时，服务会把它们写到本文件末尾（其他内容和注释保留）。
+# Without [fan.cpu_curve] / [fan.gpu_curve] the built-in BIOS table is used.
+# When curves are saved from the desktop app, the service writes them at the
+# end of this file and keeps everything else, including comments.
 
 [protect]
-# CPU 或显卡温度达到这个值（°C）时风扇立即最高档
+# All fans to maximum when the CPU or GPU reaches this temperature (°C)
 fans_max_at = 92.0
-# 达到这个温度并持续 drop_after_s 秒，暂时退出满血、回到平衡
+# At or above this temperature for drop_after_s seconds, leave Unleashed
+# and run Balanced until it cools down
 drop_at = 95.0
 drop_after_s = 10
-# 降到这个温度以下并持续 restore_after_s 秒后，恢复你选的模式
+# Return to the selected mode after restore_after_s seconds below this temperature
 restore_below = 80.0
 restore_after_s = 30
-# 风扇核对：实际转速连续 rpm_fail_after_s 秒低于目标 x rpm_ratio，判定故障
+# Fan check: measured speed below target x rpm_ratio for rpm_fail_after_s
+# seconds counts as a fan fault (fans to maximum, Unleashed is left)
 rpm_ratio = 0.7
 rpm_fail_after_s = 10

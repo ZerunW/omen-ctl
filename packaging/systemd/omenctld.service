@@ -1,6 +1,6 @@
 [Unit]
 Description=omenctl performance and fan control (HP OMEN 16, board 8D3F)
-Documentation=file:///usr/share/doc/omenctl/使用说明.md
+Documentation=file:///usr/share/doc/omenctl/USER_GUIDE.md
 After=systemd-modules-load.service
 StartLimitIntervalSec=300
 StartLimitBurst=5

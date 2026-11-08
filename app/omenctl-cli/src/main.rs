@@ -4,54 +4,52 @@ use omenctl_core::curve::{LEVEL_MAX, LEVEL_MIN};
 use omenctl_core::proto::{Client, Request, Response, Status, SOCKET_PATH};
 use omenctl_core::{FanMode, Mode};
 
-const USAGE: &str = "用法：
-  omenctl status [--json]                 显示当前状态
-  omenctl mode saver|balanced|unleashed   切换模式（省电 / 平衡 / 满血）
-  omenctl fan auto                        风扇交给 BIOS（满血模式下不允许）
-  omenctl fan curve                       风扇按曲线（默认）
-  omenctl fan max                         风扇最高档（5200 rpm）
-  omenctl fan <18-52>                     固定档位，单位 100 rpm（例如 30 = 3000 rpm）
+const USAGE: &str = "usage:
+  omenctl status [--json]                  show the current state
+  omenctl mode saver|balanced|unleashed    switch performance mode
+  omenctl fan auto                         fans controlled by the BIOS (not allowed in Unleashed)
+  omenctl fan curve                        fans follow the fan curve (default)
+  omenctl fan max                          fans at the top level (5200 rpm)
+  omenctl fan <18-52>                      fixed speed in units of 100 rpm (30 = 3000 rpm)
 
-选项：
-  --socket PATH                           服务端 socket（默认 /run/omenctl.sock）";
+options:
+  --socket PATH                            service socket (default /run/omenctl.sock)";
 
-fn fmt_opt<T: std::fmt::Display>(v: Option<T>, unit: &str) -> String {
-    v.map_or_else(|| "—".to_string(), |v| format!("{v}{unit}"))
+fn opt<T: std::fmt::Display>(v: Option<T>, unit: &str) -> String {
+    v.map_or_else(|| "-".to_string(), |v| format!("{v}{unit}"))
 }
 
 fn fan_label(f: FanMode) -> String {
     match f {
-        FanMode::Auto => "BIOS 自动".into(),
-        FanMode::Curve => "曲线".into(),
-        FanMode::Fixed(l) => format!("固定 {} rpm", l as u32 * 100),
-        FanMode::Max => "最高档".into(),
+        FanMode::Auto => "BIOS automatic".into(),
+        FanMode::Curve => "curve".into(),
+        FanMode::Fixed(l) => format!("fixed {} rpm", l as u32 * 100),
+        FanMode::Max => "maximum".into(),
     }
 }
 
 fn print_status(s: &Status) {
     let mode = if s.mode == s.effective_mode {
-        s.mode.label_zh().to_string()
+        s.mode.label().to_string()
     } else {
-        format!("{}（当前实际：{}）", s.mode.label_zh(), s.effective_mode.label_zh())
+        format!("{} (running as {})", s.mode.label(), s.effective_mode.label())
     };
-    println!("模式      {mode}");
-    println!("风扇模式  {}", fan_label(s.fan));
-    println!("CPU 温度  {}", fmt_opt(s.cpu_temp.map(|t| format!("{t:.0}")), " °C"));
-    println!("显卡温度  {}", s.gpu_temp.map_or("—（独显休眠或无法读取）".into(), |t| format!("{t:.0} °C")));
-    println!("CPU 功率  {}", fmt_opt(s.cpu_power_w.map(|w| format!("{w:.1}")), " W"));
-    println!("显卡功率  {}", fmt_opt(s.gpu_power_w.map(|w| format!("{w:.1}")), " W"));
-    println!(
-        "风扇转速  CPU {} / 显卡 {}",
-        fmt_opt(s.fan_rpm[0], " rpm"),
-        fmt_opt(s.fan_rpm[1], " rpm")
-    );
-    println!("风扇目标  CPU {} rpm / 显卡 {} rpm", s.fan_target[0] as u32 * 100, s.fan_target[1] as u32 * 100);
-    println!("电源      {}", s.ac_online.map_or("—", |a| if a { "已接通" } else { "电池" }));
+    let rpm = |l: u8| format!("{} rpm", l as u32 * 100);
+    println!("mode              {mode}");
+    println!("fan mode          {}", fan_label(s.fan));
+    println!("CPU temperature   {}", opt(s.cpu_temp.map(|t| format!("{t:.0}")), " °C"));
+    println!("GPU temperature   {}", s.gpu_temp.map_or("- (GPU asleep or unavailable)".into(), |t| format!("{t:.0} °C")));
+    println!("CPU power         {}", opt(s.cpu_power_w.map(|w| format!("{w:.1}")), " W"));
+    println!("GPU power         {}", opt(s.gpu_power_w.map(|w| format!("{w:.1}")), " W"));
+    println!("fan speed         CPU {} / GPU {}", opt(s.fan_rpm[0], " rpm"), opt(s.fan_rpm[1], " rpm"));
+    println!("fan target        CPU {} / GPU {}", rpm(s.fan_target[0]), rpm(s.fan_target[1]));
+    println!("fan recommended   CPU {} / GPU {}", rpm(s.fan_recommended[0]), rpm(s.fan_recommended[1]));
+    println!("power source      {}", s.ac_online.map_or("-", |a| if a { "AC" } else { "battery" }));
     if s.alerts.is_empty() {
-        println!("告警      无");
+        println!("alerts            none");
     } else {
         for a in &s.alerts {
-            println!("告警      {a}");
+            println!("alert             {a}");
         }
     }
 }
@@ -63,7 +61,7 @@ fn parse(words: &[String]) -> Result<(Request, bool), String> {
         [] | ["status"] => Ok((Request::Status, false)),
         ["status", "--json"] => Ok((Request::Status, true)),
         ["mode", m] => {
-            let mode = Mode::parse(m).ok_or_else(|| format!("未知模式 {m}（可用：saver / balanced / unleashed）"))?;
+            let mode = Mode::parse(m).ok_or_else(|| format!("unknown mode {m} (use saver, balanced or unleashed)"))?;
             Ok((Request::SetMode { mode }, false))
         }
         ["fan", f] => {
@@ -72,9 +70,9 @@ fn parse(words: &[String]) -> Result<(Request, bool), String> {
                 "curve" => FanMode::Curve,
                 "max" => FanMode::Max,
                 n => {
-                    let l: u8 = n.parse().map_err(|_| format!("无法识别的风扇参数 {n}"))?;
+                    let l: u8 = n.parse().map_err(|_| format!("unknown fan setting {n}"))?;
                     if !(LEVEL_MIN..=LEVEL_MAX).contains(&l) {
-                        return Err(format!("档位必须在 {LEVEL_MIN}–{LEVEL_MAX} 之间（单位 100 rpm）"));
+                        return Err(format!("fan level must be {LEVEL_MIN}-{LEVEL_MAX} (units of 100 rpm)"));
                     }
                     FanMode::Fixed(l)
                 }
@@ -91,7 +89,7 @@ fn run() -> Result<(), String> {
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--socket" => socket = it.next().ok_or("--socket 需要一个路径")?,
+            "--socket" => socket = it.next().ok_or("--socket needs a path")?,
             "-h" | "--help" | "help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -111,7 +109,7 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         Response::Error { message } => Err(message),
-        Response::Curves { .. } => Err("服务端回复了意外的内容".into()),
+        Response::Curves { .. } => Err("unexpected reply from the service".into()),
     }
 }
 

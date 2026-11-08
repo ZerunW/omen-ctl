@@ -60,17 +60,20 @@ if [ "$1" = "configure" ]; then
 			unit_exists "$u" && systemctl enable "$u" || true
 		done
 		# enabled for the next boot, NOT started now: start it by hand once the
-		# patched driver is loaded (see /usr/share/doc/omenctl/测试清单.md)
+		# patched driver is loaded (see /usr/share/doc/omenctl/HARDWARE_TEST.md)
 		systemctl enable omenctld.service || true
 	fi
 
 	cat <<'MSG'
 
-omenctl 已安装。接下来：
-  1. 把自己加入 omenctl 组：  sudo usermod -aG omenctl $USER   （重新登录后生效）
-  2. 重启电脑，让补丁版 hp-wmi 驱动生效（或按测试清单手动重载驱动）。
-  3. 服务会在下次开机自动启动；也可以手动：sudo systemctl start omenctld
-  说明文档：/usr/share/doc/omenctl/
+omenctl is installed. Next steps:
+  1. Add yourself to the omenctl group:  sudo usermod -aG omenctl $USER
+     (takes effect after logging in again)
+  2. Reboot so the patched hp-wmi driver is loaded
+     (or reload it by hand, see /usr/share/doc/omenctl/HARDWARE_TEST.md).
+  3. The service starts automatically at the next boot; to start it now:
+     sudo systemctl start omenctld
+  Documentation: /usr/share/doc/omenctl/
 MSG
 fi
 
