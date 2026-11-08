@@ -9,7 +9,7 @@
 //!   watchdog is deliberately NOT kicked so the driver forces max fans itself.
 
 use crate::config::Config;
-use crate::curve::{level_to_pwm, Smoother, LEVEL_MAX, LEVEL_MIN};
+use crate::curve::{level_to_pwm, FanCurve, Smoother, LEVEL_MAX, LEVEL_MIN};
 use crate::hw::{Hw, Sensors, PWM_AUTO, PWM_MANUAL};
 use crate::proto::Status;
 use crate::{FanMode, Mode};
@@ -205,6 +205,38 @@ impl<H: Hw> Controller<H> {
             self.fan_mode = FanMode::Curve;
         }
         self.apply_mode(mode, now);
+    }
+
+    /// Re-run the full mode switch for the current state, e.g. after resume from
+    /// sleep (the EC may have lost the 0x31 state, fan targets and the 75 W value).
+    /// Fan values are rewritten even if they look unchanged.
+    pub fn reapply(&mut self, now: f64) {
+        self.last_sensors = self.hw.sensors();
+        self.last_ac = self.last_sensors.ac_online;
+        self.written = None;
+        self.smoothers[0].reset();
+        self.smoothers[1].reset();
+        self.last_target_change = now; // give the fans time to ramp before the rpm check
+        self.rpm_bad_since = None;
+        let m = self.effective_mode;
+        self.apply_mode(m, now);
+    }
+
+    pub fn curves(&self) -> (&FanCurve, &FanCurve) {
+        (&self.cfg.fan.cpu_curve, &self.cfg.fan.gpu_curve)
+    }
+
+    /// Validate and use new fan curves (returns the normalised curves).
+    pub fn set_curves(&mut self, cpu: FanCurve, gpu: FanCurve) -> Result<(FanCurve, FanCurve), String> {
+        let mut c = self.cfg.clone();
+        c.fan.cpu_curve = cpu;
+        c.fan.gpu_curve = gpu;
+        let c = c.validated()?;
+        let out = (c.fan.cpu_curve.clone(), c.fan.gpu_curve.clone());
+        self.cfg = c;
+        self.smoothers[0].reset();
+        self.smoothers[1].reset();
+        Ok(out)
     }
 
     pub fn set_fan(&mut self, fan: FanMode, now: f64) -> Result<(), String> {
@@ -590,6 +622,48 @@ mod tests {
         c.shutdown();
         assert_eq!(c.hw.profile, "balanced");
         assert_eq!(c.hw.pwm_enable, 2);
+    }
+
+    #[test]
+    fn reapply_after_resume_rewrites_everything_in_order() {
+        let mut c = ctl(60.0, Mode::Unleashed, FanMode::Curve);
+        c.tick(1.0);
+        // EC lost state during sleep
+        c.hw.profile = "balanced".into();
+        c.hw.pwm_enable = 2;
+        c.hw.log.clear();
+        c.reapply(100.0);
+        let l = &c.hw.log;
+        assert!(pos(l, "pwm_enable=1") < pos(l, "profile=performance"), "{l:?}");
+        assert!(pos(l, "pwm=") < pos(l, "profile=performance"), "{l:?}");
+        assert!(pos(l, "profile=performance") < pos(l, "c75"), "{l:?}");
+        assert_eq!(c.user_mode(), Mode::Unleashed);
+        // the tick right after must not see an "external change"
+        let st = c.tick(101.0);
+        assert!(st.alerts.is_empty(), "{:?}", st.alerts);
+    }
+
+    #[test]
+    fn reapply_rewrites_same_fan_values() {
+        let mut c = ctl(60.0, Mode::Balanced, FanMode::Fixed(30));
+        c.tick(1.0);
+        c.hw.log.clear();
+        c.reapply(50.0);
+        assert!(c.hw.log.iter().any(|l| l.starts_with("pwm=")), "{:?}", c.hw.log);
+    }
+
+    #[test]
+    fn set_curves_validates_and_applies() {
+        use crate::curve::CurvePoint;
+        let mut c = ctl(50.0, Mode::Unleashed, FanMode::Curve);
+        let flat = |l| FanCurve { points: vec![CurvePoint { temp: 85.0, level: 52 }, CurvePoint { temp: 30.0, level: l }] };
+        let (cpu, _) = c.set_curves(flat(40), flat(30)).unwrap();
+        assert_eq!(cpu.points[0].temp, 30.0, "sorted");
+        let st = c.tick(1.0);
+        assert!(st.fan_target[0] >= 40, "{:?}", st.fan_target);
+        let bad = FanCurve { points: vec![CurvePoint { temp: 50.0, level: 30 }] };
+        assert!(c.set_curves(bad, flat(30)).is_err());
+        assert_eq!(c.curves().0, &cpu, "failed update leaves old curve");
     }
 
     #[test]

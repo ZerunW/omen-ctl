@@ -159,14 +159,17 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "toml_edit",
 ]
 
 [[package]]
 name = "omenctld"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "nvml-wrapper",
  "omenctl-core",
+ "serde",
  "serde_json",
  "signal-hook",
 ]

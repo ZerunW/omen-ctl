@@ -128,9 +128,76 @@ impl Config {
     }
 }
 
+/// Shortest decimal form of an f32, as f64 (40.5f32 -> 40.5, not 40.500000xxx).
+fn clean_f64(v: f32) -> f64 {
+    format!("{v}").parse().unwrap_or(v as f64)
+}
+
+fn curve_item(c: &FanCurve) -> toml_edit::Item {
+    let mut arr = toml_edit::Array::new();
+    for p in &c.points {
+        let mut t = toml_edit::InlineTable::new();
+        t.insert("temp", clean_f64(p.temp).into());
+        t.insert("level", (p.level as i64).into());
+        arr.push(t);
+        arr.iter_mut().last().unwrap().decor_mut().set_prefix("\n  ");
+    }
+    arr.set_trailing("\n");
+    arr.set_trailing_comma(true);
+    let mut tbl = toml_edit::Table::new();
+    tbl.insert("points", toml_edit::value(arr));
+    toml_edit::Item::Table(tbl)
+}
+
+/// Return `existing` (the text of config.toml, may be empty) with `[fan.cpu_curve]`
+/// and `[fan.gpu_curve]` replaced, keeping every other line and comment.
+/// The result is validated as a whole before it is returned.
+pub fn with_curves(existing: &str, cpu: &FanCurve, gpu: &FanCurve) -> Result<String, String> {
+    let mut doc: toml_edit::DocumentMut = existing.parse().map_err(|e| format!("config.toml: {e}"))?;
+    let fan = doc.entry("fan").or_insert(toml_edit::table());
+    let fan = fan.as_table_mut().ok_or("config.toml: [fan] is not a table")?;
+    fan.set_implicit(true);
+    fan.insert("cpu_curve", curve_item(cpu));
+    fan.insert("gpu_curve", curve_item(gpu));
+    let out = doc.to_string();
+    let c = Config::from_toml(&out)?;
+    if &c.fan.cpu_curve != cpu || &c.fan.gpu_curve != gpu {
+        return Err("internal error: curves did not round-trip".into());
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_curves_keeps_comments_and_round_trips() {
+        let orig = "# my comment\ndefault_mode = \"unleashed\"\n\n[protect]\nfans_max_at = 90.0 # keep\n";
+        let cpu = FanCurve::bios_default_cpu().validated().unwrap();
+        let mut gpu = FanCurve::bios_default_gpu().validated().unwrap();
+        gpu.points[0].temp = 40.5;
+        let out = with_curves(orig, &cpu, &gpu).unwrap();
+        assert!(out.contains("# my comment") && out.contains("# keep"), "{out}");
+        assert!(out.contains("temp = 40.5,"), "{out}");
+        let c = Config::from_toml(&out).unwrap();
+        assert_eq!(c.default_mode, crate::Mode::Unleashed);
+        assert_eq!(c.protect.fans_max_at, 90.0);
+        assert_eq!(c.fan.gpu_curve, gpu);
+        // replacing again does not duplicate tables
+        let out2 = with_curves(&out, &cpu, &cpu).unwrap();
+        assert_eq!(out2.matches("[fan.cpu_curve]").count(), 1, "{out2}");
+        assert_eq!(Config::from_toml(&out2).unwrap().fan.gpu_curve, cpu);
+        // empty file works too
+        assert!(with_curves("", &cpu, &gpu).is_ok());
+    }
+
+    #[test]
+    fn with_curves_rejects_bad_curve() {
+        let bad = FanCurve { points: vec![crate::curve::CurvePoint { temp: 50.0, level: 30 }] };
+        let ok = FanCurve::bios_default_cpu();
+        assert!(with_curves("", &bad, &ok).is_err());
+    }
 
     #[test]
     fn empty_file_gives_defaults() {

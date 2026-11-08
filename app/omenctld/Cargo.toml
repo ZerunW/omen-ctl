@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 omenctl-core = { path = "../omenctl-core" }
+serde.workspace = true
 serde_json.workspace = true
 signal-hook = "0.3"
 nvml-wrapper = "0.11"
+libc = "0.2"
