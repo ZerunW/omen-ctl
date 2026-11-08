@@ -1,0 +1,111 @@
+== 13:27:27 start: t=0s 13:27:27 cpu=50C fan=2400/2100 gpu=[40, 10.91 W, [N/A]] profile=balanced
+== set fans manual, level 45 (pwm 221)
+t=fans 13:27:32 cpu=51C fan=3700/3400 gpu=[39, 10.91 W, [N/A]] profile=balanced
+t=fans 13:27:37 cpu=51C fan=4400/4400 gpu=[39, 10.92 W, [N/A]] profile=balanced
+t=fans 13:27:42 cpu=51C fan=4400/4400 gpu=[39, 10.87 W, [N/A]] profile=balanced
+== 13:27:42 switch to performance
+== EC t=0
+mode HPCM(0x95)=49  heartbeat OMCC(0x62)=0  timer(0x63)=117  maxfan FFFS(0xEC)=0
+set   PL1(0x37)=0 PL2(0x38)=0 PL4(0x39)=0
+EFFECTIVE PL1(0x3A)=90 W  PL2(0x3B)=130 W  PL4(0x3C)=200 W
+gpu dState NVDO(0x90)=209 ECDO(0x91)=209
+== idle 180 s to pass the 120 s window (keep-alive should refresh at 90 s)
+t=0s 13:27:44 cpu=51C fan=4400/4400 gpu=[39, 10.94 W, [N/A]] profile=performance
+t=10s 13:27:54 cpu=50C fan=4400/4400 gpu=[39, 10.92 W, [N/A]] profile=performance
+t=20s 13:28:04 cpu=51C fan=4400/4400 gpu=[39, 10.92 W, [N/A]] profile=performance
+t=30s 13:28:14 cpu=51C fan=4400/4400 gpu=[39, 10.90 W, [N/A]] profile=performance
+t=40s 13:28:24 cpu=52C fan=4400/4400 gpu=[39, 10.93 W, [N/A]] profile=performance
+t=50s 13:28:34 cpu=51C fan=4400/4400 gpu=[39, 10.92 W, [N/A]] profile=performance
+t=61s 13:28:45 cpu=51C fan=4400/4400 gpu=[39, 10.89 W, [N/A]] profile=performance
+t=71s 13:28:55 cpu=51C fan=4400/4400 gpu=[39, 10.91 W, [N/A]] profile=performance
+t=81s 13:29:05 cpu=52C fan=4400/4400 gpu=[39, 10.91 W, [N/A]] profile=performance
+t=91s 13:29:15 cpu=52C fan=4400/4400 gpu=[39, 10.93 W, [N/A]] profile=performance
+t=101s 13:29:25 cpu=51C fan=4400/4400 gpu=[39, 10.90 W, [N/A]] profile=performance
+== EC ~100s
+mode HPCM(0x95)=49  heartbeat OMCC(0x62)=0  timer(0x63)=94  maxfan FFFS(0xEC)=0
+set   PL1(0x37)=0 PL2(0x38)=0 PL4(0x39)=0
+EFFECTIVE PL1(0x3A)=90 W  PL2(0x3B)=130 W  PL4(0x3C)=200 W
+gpu dState NVDO(0x90)=209 ECDO(0x91)=209
+t=111s 13:29:35 cpu=52C fan=4400/4400 gpu=[39, 10.90 W, [N/A]] profile=performance
+t=121s 13:29:45 cpu=50C fan=4400/4400 gpu=[39, 10.93 W, [N/A]] profile=performance
+t=131s 13:29:55 cpu=51C fan=4400/4400 gpu=[38, 10.92 W, [N/A]] profile=performance
+t=141s 13:30:05 cpu=51C fan=4400/4400 gpu=[38, 10.94 W, [N/A]] profile=performance
+t=151s 13:30:15 cpu=50C fan=4400/4400 gpu=[38, 10.92 W, [N/A]] profile=performance
+t=161s 13:30:25 cpu=51C fan=4400/4400 gpu=[38, 10.91 W, [N/A]] profile=performance
+t=171s 13:30:35 cpu=54C fan=4400/4400 gpu=[38, 10.90 W, [N/A]] profile=performance
+== EC ~180s (after window)
+mode HPCM(0x95)=49  heartbeat OMCC(0x62)=0  timer(0x63)=104  maxfan FFFS(0xEC)=0
+set   PL1(0x37)=0 PL2(0x38)=0 PL4(0x39)=0
+EFFECTIVE PL1(0x3A)=90 W  PL2(0x3B)=130 W  PL4(0x3C)=200 W
+gpu dState NVDO(0x90)=209 ECDO(0x91)=209
+== 13:30:45 all-core load 180 s
+t=L0s 13:30:45 cpu=51C fan=4400/4400 gpu=[38, 10.90 W, [N/A]] profile=performance
+t=L5s 13:30:50 cpu=75C fan=4400/4500 gpu=[41, 10.74 W, [N/A]] profile=performance
+Busy%	Bzy_MHz	PkgTmp	PkgWatt
+98.70	3764	77	129.93
+t=L10s 13:30:55 cpu=77C fan=4400/4400 gpu=[43, 10.74 W, [N/A]] profile=performance
+t=L16s 13:31:01 cpu=80C fan=4400/4400 gpu=[45, 10.79 W, [N/A]] profile=performance
+98.65	3772	82	129.98
+t=L21s 13:31:06 cpu=82C fan=4400/4400 gpu=[46, 10.82 W, [N/A]] profile=performance
+t=L26s 13:31:11 cpu=82C fan=4400/4400 gpu=[48, 10.83 W, [N/A]] profile=performance
+98.18	3776	82	130.00
+t=L31s 13:31:16 cpu=84C fan=4400/4400 gpu=[49, 10.89 W, [N/A]] profile=performance
+t=L36s 13:31:21 cpu=84C fan=4400/4400 gpu=[50, 10.92 W, [N/A]] profile=performance
+98.49	3725	87	130.01
+t=L41s 13:31:26 cpu=86C fan=4400/4400 gpu=[51, 10.96 W, [N/A]] profile=performance
+t=L46s 13:31:31 cpu=86C fan=4400/4400 gpu=[52, 11.00 W, [N/A]] profile=performance
+98.06	3743	87	130.00
+t=L51s 13:31:36 cpu=90C fan=4400/4400 gpu=[52, 10.97 W, [N/A]] profile=performance
+t=L56s 13:31:41 cpu=76C fan=4400/4400 gpu=[53, 11.13 W, [N/A]] profile=performance
+98.99	3365	75	99.64
+t=L61s 13:31:46 cpu=75C fan=4400/4400 gpu=[52, 11.12 W, [N/A]] profile=performance
+t=L67s 13:31:52 cpu=75C fan=4400/4400 gpu=[52, 11.10 W, [N/A]] profile=performance
+98.76	3251	75	89.73
+t=L72s 13:31:57 cpu=75C fan=4400/4400 gpu=[52, 11.08 W, [N/A]] profile=performance
+t=L77s 13:32:02 cpu=75C fan=4400/4400 gpu=[51, 11.09 W, [N/A]] profile=performance
+99.15	3254	75	89.94
+t=L82s 13:32:07 cpu=75C fan=4400/4400 gpu=[51, 11.10 W, [N/A]] profile=performance
+t=L87s 13:32:12 cpu=75C fan=4400/4400 gpu=[51, 11.09 W, [N/A]] profile=performance
+98.52	3261	75	89.97
+t=L92s 13:32:17 cpu=75C fan=4400/4400 gpu=[51, 11.08 W, [N/A]] profile=performance
+== EC load ~90s
+mode HPCM(0x95)=49  heartbeat OMCC(0x62)=0  timer(0x63)=101  maxfan FFFS(0xEC)=0
+set   PL1(0x37)=0 PL2(0x38)=0 PL4(0x39)=0
+EFFECTIVE PL1(0x3A)=90 W  PL2(0x3B)=130 W  PL4(0x3C)=200 W
+gpu dState NVDO(0x90)=209 ECDO(0x91)=209
+t=L97s 13:32:22 cpu=74C fan=4400/4400 gpu=[51, 11.09 W, [N/A]] profile=performance
+98.58	3255	75	89.97
+t=L102s 13:32:27 cpu=75C fan=4400/4400 gpu=[51, 11.12 W, [N/A]] profile=performance
+t=L108s 13:32:33 cpu=74C fan=4400/4400 gpu=[51, 11.08 W, [N/A]] profile=performance
+98.95	3251	74	90.02
+t=L113s 13:32:38 cpu=75C fan=4400/4400 gpu=[51, 11.08 W, [N/A]] profile=performance
+t=L118s 13:32:43 cpu=75C fan=4400/4400 gpu=[51, 11.09 W, [N/A]] profile=performance
+98.02	3253	74	90.01
+t=L123s 13:32:48 cpu=74C fan=4400/4400 gpu=[51, 11.09 W, [N/A]] profile=performance
+t=L128s 13:32:53 cpu=75C fan=4400/4400 gpu=[51, 11.08 W, [N/A]] profile=performance
+98.86	3251	75	89.99
+t=L133s 13:32:58 cpu=76C fan=4400/4400 gpu=[51, 11.10 W, [N/A]] profile=performance
+t=L138s 13:33:03 cpu=75C fan=4400/4400 gpu=[51, 11.08 W, [N/A]] profile=performance
+98.86	3258	74	90.02
+t=L143s 13:33:08 cpu=75C fan=4400/4400 gpu=[51, 11.07 W, [N/A]] profile=performance
+t=L148s 13:33:13 cpu=75C fan=4400/4400 gpu=[51, 11.08 W, [N/A]] profile=performance
+98.85	3257	74	90.00
+t=L154s 13:33:19 cpu=74C fan=4400/4400 gpu=[51, 11.11 W, [N/A]] profile=performance
+t=L159s 13:33:24 cpu=74C fan=4400/4400 gpu=[51, 11.08 W, [N/A]] profile=performance
+98.94	3260	75	89.99
+t=L164s 13:33:29 cpu=75C fan=4400/4400 gpu=[51, 11.10 W, [N/A]] profile=performance
+t=L169s 13:33:34 cpu=75C fan=4400/4400 gpu=[51, 11.09 W, [N/A]] profile=performance
+97.98	3258	75	89.98
+t=L174s 13:33:39 cpu=75C fan=4400/4400 gpu=[51, 11.08 W, [N/A]] profile=performance
+t=L179s 13:33:44 cpu=74C fan=4400/4400 gpu=[51, 11.11 W, [N/A]] profile=performance
+97.89	3266	74	90.01
+== EC end of load
+mode HPCM(0x95)=49  heartbeat OMCC(0x62)=0  timer(0x63)=100  maxfan FFFS(0xEC)=0
+set   PL1(0x37)=0 PL2(0x38)=0 PL4(0x39)=0
+EFFECTIVE PL1(0x3A)=90 W  PL2(0x3B)=130 W  PL4(0x3C)=200 W
+gpu dState NVDO(0x90)=209 ECDO(0x91)=209
+== 13:33:50 balanced, fans stay manual 45 until CPU < 60C
+t=cools 13:33:50 cpu=65C fan=4400/4400 gpu=[51, 11.11 W, [N/A]] profile=balanced
+t=cools 13:33:55 cpu=60C fan=4400/4400 gpu=[49, 11.30 W, [N/A]] profile=balanced
+t=cools 13:34:00 cpu=59C fan=4400/4400 gpu=[48, 11.21 W, [N/A]] profile=balanced
+== 13:34:00 done (fans still manual 45; profile balanced). log: /home/zerun/Documents/omenctl/tools/../logs/perf-test2-132726.log

@@ -1,0 +1,15 @@
+== 13:41:29 fans manual level 45
+== 13:41:39 performance
+mode HPCM(0x95)=49  heartbeat OMCC(0x62)=0  timer(0x63)=117  maxfan FFFS(0xEC)=0
+set   PL1(0x37)=0 PL2(0x38)=0 PL4(0x39)=0
+EFFECTIVE PL1(0x3A)=90 W  PL2(0x3B)=130 W  PL4(0x3C)=200 W
+gpu dState NVDO(0x90)=209 ECDO(0x91)=209
+1 thread   P-busy=1 avg=4941 max=4941 MHz | E-busy=0 avg=- MHz | pkg=50.33W 83C
+4 threads  P-busy=4 avg=4798 max=4799 MHz | E-busy=0 avg=- MHz | pkg=95.74W 92C
+8 threads  P-busy=8 avg=4414 max=4418 MHz | E-busy=0 avg=- MHz | pkg=130.21W 94C
+24 thr     P-busy=16 avg=3776 max=3785 MHz | E-busy=8 avg=3026 MHz | pkg=113.45W 75C
+mode HPCM(0x95)=49  heartbeat OMCC(0x62)=0  timer(0x63)=60  maxfan FFFS(0xEC)=0
+set   PL1(0x37)=0 PL2(0x38)=0 PL4(0x39)=0
+EFFECTIVE PL1(0x3A)=90 W  PL2(0x3B)=130 W  PL4(0x3C)=200 W
+gpu dState NVDO(0x90)=209 ECDO(0x91)=209
+== 13:44:09 balanced, fans back to auto (they pause ~2 min). log: /home/zerun/Documents/omenctl/tools/../logs/pcore-test-134129.log

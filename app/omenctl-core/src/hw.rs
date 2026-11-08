@@ -1,0 +1,209 @@
+//! Hardware access through standard sysfs files only.
+//! `Hw` is the interface the controller uses; `SysfsHw` is the real implementation
+//! (with a configurable root so tests can point it at a fake tree).
+
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+pub const PWM_MANUAL: u8 = 1;
+pub const PWM_AUTO: u8 = 2;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Sensors {
+    /// CPU package temperature (C).
+    pub cpu_temp: Option<f32>,
+    /// GPU temperature (C); None while the dGPU is runtime-suspended.
+    pub gpu_temp: Option<f32>,
+    pub fan_rpm: [Option<u32>; 2],
+    pub ac_online: Option<bool>,
+}
+
+pub trait Hw {
+    fn sensors(&mut self) -> Sensors;
+    fn platform_profile(&self) -> io::Result<String>;
+    fn set_platform_profile(&mut self, p: &str) -> io::Result<()>;
+    fn pwm_enable(&self) -> io::Result<u8>;
+    fn set_pwm_enable(&mut self, v: u8) -> io::Result<()>;
+    /// Set both fan pwm values (driver order: fan1 = CPU, fan2 = GPU).
+    fn set_pwm(&mut self, cpu: u8, gpu: u8) -> io::Result<()>;
+    /// Tell the kernel fan watchdog that userspace is alive.
+    fn kick(&mut self) -> io::Result<()>;
+    fn set_concurrent_75w(&mut self) -> io::Result<()>;
+    fn set_rapl(&mut self, pl1_w: u32, pl2_w: u32) -> io::Result<()>;
+}
+
+/// Paths relative to a root (normally "/").
+pub struct SysfsHw {
+    root: PathBuf,
+    gpu: Option<Box<dyn FnMut() -> Option<f32> + Send>>,
+}
+
+impl SysfsHw {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        SysfsHw { root: root.into(), gpu: None }
+    }
+
+    /// Install a GPU temperature reader (e.g. NVML). It is only called while the
+    /// dGPU is runtime-active, so polling never wakes a sleeping GPU.
+    pub fn with_gpu_reader(mut self, f: impl FnMut() -> Option<f32> + Send + 'static) -> Self {
+        self.gpu = Some(Box::new(f));
+        self
+    }
+
+    fn p(&self, rel: &str) -> PathBuf {
+        self.root.join(rel)
+    }
+
+    fn hpwmi(&self) -> PathBuf {
+        self.p("sys/devices/platform/hp-wmi")
+    }
+
+    fn hp_hwmon(&self) -> io::Result<PathBuf> {
+        first_dir(&self.hpwmi().join("hwmon"))
+    }
+
+    fn coretemp(&self) -> Option<PathBuf> {
+        let dir = self.p("sys/class/hwmon");
+        let mut v: Vec<_> = fs::read_dir(&dir).ok()?.flatten().map(|e| e.path()).collect();
+        v.sort();
+        v.into_iter().find(|h| read_trim(&h.join("name")).ok().as_deref() == Some("coretemp"))
+    }
+
+    fn gpu_active(&self) -> bool {
+        read_trim(&self.p("sys/bus/pci/devices/0000:01:00.0/power/runtime_status"))
+            .map(|s| s == "active")
+            .unwrap_or(false)
+    }
+}
+
+fn first_dir(dir: &Path) -> io::Result<PathBuf> {
+    let mut v: Vec<_> = fs::read_dir(dir)?.flatten().map(|e| e.path()).collect();
+    v.sort();
+    v.into_iter().next().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("nothing in {}", dir.display())))
+}
+
+pub fn read_trim(p: &Path) -> io::Result<String> {
+    Ok(fs::read_to_string(p)?.trim().to_string())
+}
+
+fn write(p: &Path, v: &str) -> io::Result<()> {
+    fs::write(p, v).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", p.display())))
+}
+
+impl Hw for SysfsHw {
+    fn sensors(&mut self) -> Sensors {
+        let cpu_temp = self
+            .coretemp()
+            .and_then(|h| read_trim(&h.join("temp1_input")).ok())
+            .and_then(|s| s.parse::<f32>().ok())
+            .map(|m| m / 1000.0);
+        let gpu_temp = if self.gpu_active() { self.gpu.as_mut().and_then(|f| f()) } else { None };
+        let mut fan_rpm = [None, None];
+        if let Ok(h) = self.hp_hwmon() {
+            for (i, slot) in fan_rpm.iter_mut().enumerate() {
+                *slot = read_trim(&h.join(format!("fan{}_input", i + 1))).ok().and_then(|s| s.parse().ok());
+            }
+        }
+        let ac_online = read_trim(&self.p("sys/class/power_supply/ADP1/online")).ok().map(|s| s == "1");
+        Sensors { cpu_temp, gpu_temp, fan_rpm, ac_online }
+    }
+
+    fn platform_profile(&self) -> io::Result<String> {
+        read_trim(&self.p("sys/firmware/acpi/platform_profile"))
+    }
+
+    fn set_platform_profile(&mut self, p: &str) -> io::Result<()> {
+        write(&self.p("sys/firmware/acpi/platform_profile"), p)
+    }
+
+    fn pwm_enable(&self) -> io::Result<u8> {
+        read_trim(&self.hp_hwmon()?.join("pwm1_enable"))?
+            .parse()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("pwm1_enable: {e}")))
+    }
+
+    fn set_pwm_enable(&mut self, v: u8) -> io::Result<()> {
+        write(&self.hp_hwmon()?.join("pwm1_enable"), &v.to_string())
+    }
+
+    fn set_pwm(&mut self, cpu: u8, gpu: u8) -> io::Result<()> {
+        let h = self.hp_hwmon()?;
+        write(&h.join("pwm1"), &cpu.to_string())?;
+        write(&h.join("pwm2"), &gpu.to_string())
+    }
+
+    fn kick(&mut self) -> io::Result<()> {
+        write(&self.hpwmi().join("omenctl_kick"), "1")
+    }
+
+    fn set_concurrent_75w(&mut self) -> io::Result<()> {
+        write(&self.hpwmi().join("omenctl_concurrent_tdp"), "75")
+    }
+
+    fn set_rapl(&mut self, pl1_w: u32, pl2_w: u32) -> io::Result<()> {
+        let z = self.p("sys/class/powercap/intel-rapl:0");
+        write(&z.join("constraint_0_power_limit_uw"), &(pl1_w as u64 * 1_000_000).to_string())?;
+        write(&z.join("constraint_1_power_limit_uw"), &(pl2_w as u64 * 1_000_000).to_string())
+    }
+}
+
+/// Extra telemetry for status display (not used for control decisions).
+pub fn read_cpu_energy_uj(root: &Path) -> Option<u64> {
+    read_trim(&root.join("sys/class/powercap/intel-rapl:0/energy_uj")).ok()?.parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tree() -> PathBuf {
+        let d = std::env::temp_dir().join(format!("omenctl-hw-{}-{}", std::process::id(), rand_suffix()));
+        let mk = |rel: &str, v: &str| {
+            let p = d.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, v).unwrap();
+        };
+        mk("sys/firmware/acpi/platform_profile", "balanced\n");
+        mk("sys/devices/platform/hp-wmi/hwmon/hwmon7/pwm1_enable", "2\n");
+        mk("sys/devices/platform/hp-wmi/hwmon/hwmon7/pwm1", "0\n");
+        mk("sys/devices/platform/hp-wmi/hwmon/hwmon7/pwm2", "0\n");
+        mk("sys/devices/platform/hp-wmi/hwmon/hwmon7/fan1_input", "2600\n");
+        mk("sys/devices/platform/hp-wmi/hwmon/hwmon7/fan2_input", "2400\n");
+        mk("sys/devices/platform/hp-wmi/omenctl_kick", "");
+        mk("sys/devices/platform/hp-wmi/omenctl_concurrent_tdp", "");
+        mk("sys/class/hwmon/hwmon1/name", "acpi_fan\n");
+        mk("sys/class/hwmon/hwmon9/name", "coretemp\n");
+        mk("sys/class/hwmon/hwmon9/temp1_input", "56000\n");
+        mk("sys/class/power_supply/ADP1/online", "1\n");
+        mk("sys/bus/pci/devices/0000:01:00.0/power/runtime_status", "suspended\n");
+        d
+    }
+
+    fn rand_suffix() -> u128 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    }
+
+    #[test]
+    fn reads_and_writes_fake_tree() {
+        let root = tree();
+        let mut hw = SysfsHw::new(&root).with_gpu_reader(|| Some(70.0));
+        let s = hw.sensors();
+        assert_eq!(s.cpu_temp, Some(56.0));
+        assert_eq!(s.gpu_temp, None, "suspended GPU must not be queried");
+        assert_eq!(s.fan_rpm, [Some(2600), Some(2400)]);
+        assert_eq!(s.ac_online, Some(true));
+        assert_eq!(hw.platform_profile().unwrap(), "balanced");
+        hw.set_pwm_enable(PWM_MANUAL).unwrap();
+        hw.set_pwm(221, 200).unwrap();
+        hw.kick().unwrap();
+        hw.set_concurrent_75w().unwrap();
+        let h = root.join("sys/devices/platform/hp-wmi");
+        assert_eq!(read_trim(&h.join("hwmon/hwmon7/pwm1_enable")).unwrap(), "1");
+        assert_eq!(read_trim(&h.join("hwmon/hwmon7/pwm2")).unwrap(), "200");
+        assert_eq!(read_trim(&h.join("omenctl_concurrent_tdp")).unwrap(), "75");
+        fs::write(root.join("sys/bus/pci/devices/0000:01:00.0/power/runtime_status"), "active").unwrap();
+        assert_eq!(hw.sensors().gpu_temp, Some(70.0));
+        fs::remove_dir_all(root).ok();
+    }
+}

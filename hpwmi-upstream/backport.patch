@@ -1,0 +1,282 @@
+--- hp-wmi-upstream-e931e54.c	2026-11-08 12:58:59.777690466 -0500
++++ src/hp-wmi.c	2026-11-08 14:33:23.049604094 -0500
+@@ -43,6 +43,11 @@
+ 
+ #include <acpi/battery.h>
+ 
++/* omenctl backport to Ubuntu 7.0: ACPI_AC_CLASS moved to a shared header in v7.1 */
++#ifndef ACPI_AC_CLASS
++#define ACPI_AC_CLASS "ac_adapter"
++#endif
++
+ MODULE_AUTHOR("Matthew Garrett <mjg59@srcf.ucam.org>");
+ MODULE_DESCRIPTION("HP laptop WMI driver");
+ MODULE_LICENSE("GPL");
+@@ -658,8 +663,30 @@
+ 	u8 cpu_pwm;
+ 	u8 gpu_pwm;
+ 	struct delayed_work keep_alive_dwork;
++	/* omenctl fan watchdog, protected by lock */
++	struct delayed_work omenctl_wd_dwork;
++	unsigned long omenctl_last_kick;
++	bool omenctl_armed;
++	bool omenctl_tripped;
+ };
+ 
++/*
++ * omenctl fan watchdog: once userspace has written omenctl_kick at least once,
++ * if the fans are in manual mode and no kick arrives for omenctl_wd_timeout
++ * seconds, force both fans to the maximum table level. Fails towards cooling.
++ */
++#define OMENCTL_WD_PERIOD_SECS	5
++static unsigned int omenctl_wd_timeout = 15;
++module_param(omenctl_wd_timeout, uint, 0444);
++MODULE_PARM_DESC(omenctl_wd_timeout, "omenctl fan watchdog timeout in seconds (5-60, default 15)");
++
++static struct hp_wmi_hwmon_priv *omenctl_priv;	/* set when fan control is usable */
++
++static unsigned int omenctl_wd_secs(void)
++{
++	return clamp_val(omenctl_wd_timeout, 5, 60);
++}
++
+ struct victus_s_fan_table_header {
+ 	u8 num_fans;
+ 	u8 unknown;
+@@ -1592,6 +1619,78 @@
+ 	return count;
+ }
+ 
++/*
++ * omenctl addition (board 8D3F only): set the CPU+GPU concurrent power target
++ * used by NVIDIA Dynamic Boost (BIOS GM29 byte 3 -> NPCF.OPAT = W * 8).
++ * Only the value captured from OMEN Gaming Hub's Unleashed log (75 W) is accepted;
++ * PL1/PL2/PL4 bytes are 0xFF (unchanged). Any 0x1A mode switch resets it in BIOS DTPC.
++ */
++#define OMENCTL_CONCURRENT_TDP_W	75
++static ssize_t omenctl_concurrent_tdp_store(struct device *dev,
++					    struct device_attribute *attr,
++					    const char *buf, size_t count)
++{
++	struct victus_power_limits limits;
++	u32 val;
++	int ret;
++
++	if (!dmi_match(DMI_BOARD_NAME, "8D3F"))
++		return -EOPNOTSUPP;
++
++	ret = kstrtou32(buf, 10, &val);
++	if (ret)
++		return ret;
++	if (val != OMENCTL_CONCURRENT_TDP_W)
++		return -EINVAL;
++
++	limits.pl1 = HP_POWER_LIMIT_NO_CHANGE;
++	limits.pl2 = HP_POWER_LIMIT_NO_CHANGE;
++	limits.pl4 = HP_POWER_LIMIT_NO_CHANGE;
++	limits.cpu_gpu_concurrent_limit = OMENCTL_CONCURRENT_TDP_W;
++
++	ret = hp_wmi_perform_query(HPWMI_SET_POWER_LIMITS_QUERY, HPWMI_GM,
++				   &limits, sizeof(limits), 0);
++	if (ret)
++		return ret < 0 ? ret : -EIO;
++
++	return count;
++}
++
++static ssize_t omenctl_kick_store(struct device *dev,
++				  struct device_attribute *attr,
++				  const char *buf, size_t count)
++{
++	struct hp_wmi_hwmon_priv *priv = READ_ONCE(omenctl_priv);
++
++	if (!priv)
++		return -ENODEV;
++
++	guard(mutex)(&priv->lock);
++	priv->omenctl_last_kick = jiffies;
++	priv->omenctl_armed = true;
++	priv->omenctl_tripped = false;
++
++	return count;
++}
++
++static ssize_t omenctl_kick_show(struct device *dev,
++				 struct device_attribute *attr, char *buf)
++{
++	struct hp_wmi_hwmon_priv *priv = READ_ONCE(omenctl_priv);
++	unsigned long since;
++
++	if (!priv)
++		return -ENODEV;
++
++	guard(mutex)(&priv->lock);
++	since = priv->omenctl_armed ?
++		jiffies_to_msecs(jiffies - priv->omenctl_last_kick) / 1000 : 0;
++
++	return sysfs_emit(buf, "armed=%d tripped=%d since_kick=%lu timeout=%u mode=%u\n",
++			  priv->omenctl_armed, priv->omenctl_tripped, since,
++			  omenctl_wd_secs(), priv->mode);
++}
++
+ static DEVICE_ATTR_RO(display);
+ static DEVICE_ATTR_RO(hddtemp);
+ static DEVICE_ATTR_RW(als);
+@@ -1599,6 +1698,8 @@
+ static DEVICE_ATTR_RO(tablet);
+ static DEVICE_ATTR_RW(postcode);
+ static DEVICE_ATTR_RW(gpu_mux_mode);
++static DEVICE_ATTR_WO(omenctl_concurrent_tdp);
++static DEVICE_ATTR_RW(omenctl_kick);
+ 
+ static struct attribute *hp_wmi_attrs[] = {
+ 	&dev_attr_display.attr,
+@@ -1608,6 +1709,8 @@
+ 	&dev_attr_tablet.attr,
+ 	&dev_attr_postcode.attr,
+ 	&dev_attr_gpu_mux_mode.attr,
++	&dev_attr_omenctl_concurrent_tdp.attr,
++	&dev_attr_omenctl_kick.attr,
+ 	NULL,
+ };
+ ATTRIBUTE_GROUPS(hp_wmi);
+@@ -2291,6 +2394,37 @@
+ 	return params->get_fan_speed(fan);
+ }
+ 
++/*
++ * omenctl (board 8D3F): on this EC a 0x2E fan target of 0 means "stop", not
++ * "automatic". After any 0x10 call the EC runs the fans at the 0x2E targets for
++ * ~120 s, so handing back to BIOS by writing {0,0} stops both fans for 2 minutes.
++ * Instead hold the current measured speed (clamped to the fan table, never 0) and
++ * let the 120 s window expire; the EC then resumes its own curve.
++ */
++static bool omenctl_is_8d3f(void)
++{
++	return dmi_match(DMI_BOARD_NAME, "8D3F");
++}
++
++static int omenctl_fan_hold_current(struct hp_wmi_hwmon_priv *priv)
++{
++	u8 speed[2];
++	int rpm, fan, ret;
++
++	for (fan = 0; fan < 2; fan++) {
++		rpm = hp_wmi_get_active_fan_speed(fan);
++		speed[fan] = rpm < 0 ? priv->max_rpm :
++			     clamp_val(rpm / 100, priv->min_rpm, priv->max_rpm);
++	}
++
++	ret = hp_wmi_fan_speed_max_set(0);
++	if (ret < 0)
++		return ret;
++
++	return hp_wmi_perform_query(HPWMI_VICTUS_S_FAN_SPEED_SET_QUERY, HPWMI_GM,
++				    &speed, sizeof(speed), 0);
++}
++
+ static int victus_s_gpu_thermal_profile_get(bool *ctgp_enable,
+ 					    bool *ppab_enable,
+ 					    u8 *dstate,
+@@ -2477,6 +2611,24 @@
+ 		return err;
+ 	}
+ 
++	/*
++	 * omenctl (8D3F): the 0x10 above opened a ~120 s window in which the EC
++	 * runs the fans at the last 0x2E targets. In BIOS-auto fan mode those may
++	 * be stale or 0, so hold the current speed instead of freezing/stopping.
++	 */
++	if (omenctl_is_8d3f()) {
++		struct hp_wmi_hwmon_priv *priv = READ_ONCE(omenctl_priv);
++
++		if (priv) {
++			guard(mutex)(&priv->lock);
++			if (priv->mode == PWM_MODE_AUTO) {
++				err = omenctl_fan_hold_current(priv);
++				if (err)
++					pr_warn("omenctl: failed to hold fan speed: %d\n", err);
++			}
++		}
++	}
++
+ 	return 0;
+ }
+ 
+@@ -2929,7 +3081,9 @@
+ 				 secs_to_jiffies(KEEP_ALIVE_DELAY_SECS));
+ 		return 0;
+ 	case PWM_MODE_AUTO:
+-		if (hp_wmi_fan_control_supported()) {
++		if (hp_wmi_fan_control_supported() && omenctl_is_8d3f()) {
++			ret = omenctl_fan_hold_current(priv);
++		} else if (hp_wmi_fan_control_supported()) {
+ 			ret = hp_wmi_get_fan_count_userdefine_trigger();
+ 			if (ret < 0)
+ 				return ret;
+@@ -3120,6 +3274,37 @@
+ 				    ret);
+ }
+ 
++static void omenctl_wd_handler(struct work_struct *work)
++{
++	struct hp_wmi_hwmon_priv *priv;
++	unsigned int secs = omenctl_wd_secs();
++	int ret;
++
++	priv = container_of(to_delayed_work(work), struct hp_wmi_hwmon_priv,
++			    omenctl_wd_dwork);
++
++	scoped_guard(mutex, &priv->lock) {
++		if (priv->omenctl_armed && !priv->omenctl_tripped &&
++		    priv->mode == PWM_MODE_MANUAL &&
++		    time_after(jiffies, priv->omenctl_last_kick + secs_to_jiffies(secs))) {
++			priv->cpu_pwm = U8_MAX;
++			priv->gpu_pwm = U8_MAX;
++			ret = hp_wmi_apply_fan_settings(priv);
++			priv->omenctl_tripped = true;
++			pr_crit("omenctl watchdog: no kick for %us, fans forced to max level (ret %d)\n",
++				secs, ret);
++		}
++	}
++
++	mod_delayed_work(system_dfl_wq, &priv->omenctl_wd_dwork,
++			 secs_to_jiffies(OMENCTL_WD_PERIOD_SECS));
++}
++
++static void omenctl_priv_clear(void *data)
++{
++	WRITE_ONCE(omenctl_priv, NULL);
++}
++
+ static int hp_wmi_setup_fan_settings(struct hp_wmi_hwmon_priv *priv)
+ {
+ 	u8 fan_data[128] = { 0 };
+@@ -3208,6 +3393,11 @@
+ 	if (ret)
+ 		return ret;
+ 
++	ret = devm_delayed_work_autocancel(dev, &priv->omenctl_wd_dwork,
++					   omenctl_wd_handler);
++	if (ret)
++		return ret;
++
+ 	hwmon = devm_hwmon_device_register_with_info(dev, "hp", priv,
+ 						     &chip_info, NULL);
+ 
+@@ -3225,6 +3415,15 @@
+ 	if (ret)
+ 		dev_warn(dev, "Failed to apply initial fan settings: %d\n", ret);
+ 
++	if (hp_wmi_fan_control_supported()) {
++		ret = devm_add_action_or_reset(dev, omenctl_priv_clear, NULL);
++		if (ret)
++			return ret;
++		WRITE_ONCE(omenctl_priv, priv);
++		mod_delayed_work(system_dfl_wq, &priv->omenctl_wd_dwork,
++				 secs_to_jiffies(OMENCTL_WD_PERIOD_SECS));
++	}
++
+ 	return 0;
+ }
+ 

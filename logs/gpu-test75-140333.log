@@ -1,0 +1,59 @@
+== 14:03:33 sign + reload driver
+loaded srcversion=B7F9F8E0B6055F812351852
+== 14:03:43 performance
+mode HPCM(0x95)=49  heartbeat OMCC(0x62)=0  timer(0x63)=104  maxfan FFFS(0xEC)=0
+set   PL1(0x37)=0 PL2(0x38)=0 PL4(0x39)=0
+EFFECTIVE PL1(0x3A)=90 W  PL2(0x3B)=130 W  PL4(0x3C)=200 W
+gpu dState NVDO(0x90)=209 ECDO(0x91)=209
+== write concurrent TDP 75
+ok
+== 14:04:02 GPU only, perf + 75W  [gpu draw, enforced limit, sm clock, temp, util]
+t=2s cpu=71C fan=4400/4400 gpu=[86.11 W, 115.00 W, 2767 MHz, 58, 100 %]
+t=4s cpu=71C fan=4400/4400 gpu=[87.47 W, 115.00 W, 2767 MHz, 59, 100 %]
+t=6s cpu=74C fan=4400/4400 gpu=[87.71 W, 115.00 W, 2767 MHz, 60, 100 %]
+t=8s cpu=74C fan=4400/4400 gpu=[87.90 W, 115.00 W, 2767 MHz, 61, 100 %]
+t=10s cpu=76C fan=4400/4400 gpu=[88.00 W, 115.00 W, 2767 MHz, 61, 100 %]
+t=12s cpu=76C fan=4400/4400 gpu=[88.13 W, 115.00 W, 2767 MHz, 62, 100 %]
+t=14s cpu=77C fan=4400/4400 gpu=[88.23 W, 115.00 W, 2767 MHz, 62, 100 %]
+t=16s cpu=77C fan=4400/4400 gpu=[88.32 W, 115.00 W, 2767 MHz, 63, 100 %]
+t=18s cpu=77C fan=4400/4400 gpu=[88.50 W, 115.00 W, 2767 MHz, 63, 100 %]
+t=20s cpu=77C fan=4400/4400 gpu=[88.63 W, 115.00 W, 2767 MHz, 64, 100 %]
+t=22s cpu=78C fan=4400/4400 gpu=[88.78 W, 115.00 W, 2767 MHz, 64, 100 %]
+t=24s cpu=79C fan=4400/4400 gpu=[88.82 W, 115.00 W, 2767 MHz, 65, 100 %]
+t=26s cpu=79C fan=4400/4400 gpu=[88.71 W, 115.00 W, 2760 MHz, 65, 100 %]
+t=28s cpu=79C fan=4400/4400 gpu=[88.77 W, 115.00 W, 2760 MHz, 65, 100 %]
+t=30s cpu=79C fan=4400/4400 gpu=[88.93 W, 115.00 W, 2760 MHz, 66, 100 %]
+t=32s cpu=79C fan=4400/4400 gpu=[88.94 W, 115.00 W, 2760 MHz, 66, 100 %]
+t=34s cpu=81C fan=4400/4400 gpu=[89.04 W, 115.00 W, 2760 MHz, 66, 100 %]
+t=36s cpu=79C fan=4400/4400 gpu=[89.16 W, 115.00 W, 2760 MHz, 67, 100 %]
+t=38s cpu=81C fan=4400/4400 gpu=[89.24 W, 115.00 W, 2760 MHz, 67, 100 %]
+t=40s cpu=81C fan=4400/4400 gpu=[89.29 W, 115.00 W, 2760 MHz, 67, 100 %]
+t=42s cpu=83C fan=4400/4400 gpu=[89.35 W, 115.00 W, 2760 MHz, 67, 100 %]
+t=44s cpu=81C fan=4400/4400 gpu=[89.41 W, 115.00 W, 2760 MHz, 68, 100 %]
+t=46s cpu=82C fan=4400/4400 gpu=[89.45 W, 115.00 W, 2760 MHz, 68, 100 %]
+t=48s cpu=82C fan=4400/4400 gpu=[89.56 W, 115.00 W, 2760 MHz, 68, 100 %]
+t=50s cpu=82C fan=4400/4400 gpu=[89.61 W, 115.00 W, 2760 MHz, 68, 100 %]
+t=52s cpu=83C fan=4400/4400 gpu=[89.70 W, 115.00 W, 2760 MHz, 69, 100 %]
+t=54s cpu=82C fan=4400/4400 gpu=[89.73 W, 115.00 W, 2760 MHz, 69, 100 %]
+t=56s cpu=83C fan=4400/4400 gpu=[89.73 W, 115.00 W, 2760 MHz, 69, 100 %]
+t=58s cpu=83C fan=4400/4400 gpu=[89.76 W, 115.00 W, 2760 MHz, 69, 100 %]
+t=60s cpu=82C fan=4400/4400 gpu=[89.78 W, 115.00 W, 2760 MHz, 69, 100 %]
+t=62s cpu=85C fan=4400/4400 gpu=[89.87 W, 115.00 W, 2760 MHz, 69, 100 %]
+t=64s cpu=86C fan=4400/4400 gpu=[89.93 W, 115.00 W, 2760 MHz, 70, 100 %]
+t=66s cpu=86C fan=4400/4400 gpu=[89.95 W, 115.00 W, 2760 MHz, 70, 100 %]
+t=68s cpu=85C fan=4400/4400 gpu=[90.02 W, 115.00 W, 2760 MHz, 70, 100 %]
+t=70s cpu=83C fan=4400/4400 gpu=[90.10 W, 115.00 W, 2760 MHz, 70, 100 %]
+t=72s cpu=83C fan=4400/4400 gpu=[90.12 W, 115.00 W, 2760 MHz, 70, 100 %]
+t=74s cpu=85C fan=4400/4400 gpu=[90.18 W, 115.00 W, 2760 MHz, 70, 100 %]
+  cpu-turbostat: Bzy_MHz	PkgWatt
+  cpu-turbostat: 4334	51.34
+  cpu-turbostat: 4344	51.04
+  cpu-turbostat: 4355	50.76
+  cpu-turbostat: 4339	50.75
+  cpu-turbostat: 4338	50.49
+t=76s cpu=87C fan=4400/4400 gpu=[90.21 W, 115.00 W, 2760 MHz, 70, 100 %]
+t=78s cpu=83C fan=4400/4400 gpu=[90.21 W, 115.00 W, 2760 MHz, 71, 100 %]
+t=80s cpu=83C fan=4400/4400 gpu=[90.26 W, 115.00 W, 2760 MHz, 71, 100 %]
+t=82s cpu=86C fan=4400/4400 gpu=[90.25 W, 115.00 W, 2760 MHz, 71, 100 %]
+t=84s cpu=85C fan=4400/4400 gpu=[90.29 W, 115.00 W, 2760 MHz, 71, 100 %]
+t=86s cpu=86C fan=4400/4400 gpu=[90.33 W, 115.00 W, 2760 MHz, 71, 100 %]

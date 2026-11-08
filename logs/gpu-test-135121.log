@@ -1,0 +1,20 @@
+== 13:51:21 start: profile=balanced fans=2600/2400 gpu=[10.90 W, [N/A], 80.00 W, 180 MHz, 40, 0 %, P8]
+== 13:51:21 A balanced: GPU load 90 s  [power.draw, power.limit, enforced.limit, sm clock, temp, util, pstate]
+t=2s cpu=51C fan=2600/2400 gpu=[10.90 W, [N/A], 80.00 W, 180 MHz, 40, 0 %, P8]
+t=4s cpu=53C fan=2600/2400 gpu=[26.80 W, [N/A], 82.99 W, 2197 MHz, 41, 0 %, P2]
+t=6s cpu=53C fan=2600/2400 gpu=[24.49 W, [N/A], 81.52 W, 2197 MHz, 41, 0 %, P2]
+t=8s cpu=54C fan=2600/2400 gpu=[24.48 W, [N/A], 84.64 W, 2197 MHz, 41, 0 %, P2]
+t=10s cpu=51C fan=2600/2400 gpu=[24.41 W, [N/A], 92.23 W, 2197 MHz, 41, 0 %, P2]
+== hashcat ended
+== 13:51:45 fans manual level 45
+== 13:51:55 performance
+mode HPCM(0x95)=49  heartbeat OMCC(0x62)=0  timer(0x63)=100  maxfan FFFS(0xEC)=0
+set   PL1(0x37)=0 PL2(0x38)=0 PL4(0x39)=0
+EFFECTIVE PL1(0x3A)=90 W  PL2(0x3B)=130 W  PL4(0x3C)=200 W
+gpu dState NVDO(0x90)=209 ECDO(0x91)=209
+== 13:52:15 B performance: GPU load 90 s  [power.draw, power.limit, enforced.limit, sm clock, temp, util, pstate]
+t=2s cpu=54C fan=4400/4400 gpu=[10.96 W, [N/A], 100.00 W, 180 MHz, 40, 0 %, P8]
+t=4s cpu=54C fan=4400/4400 gpu=[24.32 W, [N/A], 98.58 W, 2197 MHz, 41, 0 %, P2]
+t=6s cpu=53C fan=4400/4400 gpu=[25.03 W, [N/A], 111.47 W, 2197 MHz, 41, 0 %, P0]
+== hashcat ended
+== 13:52:35 balanced, fans auto. log: /home/zerun/Documents/omenctl/tools/../logs/gpu-test-135121.log

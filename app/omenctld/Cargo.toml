@@ -1,0 +1,11 @@
+[package]
+name = "omenctld"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+omenctl-core = { path = "../omenctl-core" }
+serde_json.workspace = true
+signal-hook = "0.3"
+nvml-wrapper = "0.11"

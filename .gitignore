@@ -1,0 +1,14 @@
+# build outputs
+app/target/
+hpwmi-upstream/src/*.ko
+hpwmi-upstream/src/*.o
+hpwmi-upstream/src/*.mod
+hpwmi-upstream/src/*.mod.c
+hpwmi-upstream/src/.*.cmd
+hpwmi-upstream/src/Module.symvers
+hpwmi-upstream/src/modules.order
+hpwmi-upstream/src/.tmp_versions/
+hpwmi-upstream/commits.json
+# raw ACPI binaries (keep decompiled .dsl); never commit the Windows key table
+acpi/*.dat
+acpi/msdm*

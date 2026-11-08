@@ -1,0 +1,20 @@
+== 13:20:02 re-apply profile: balanced -> performance
+== 13:20:07 EC right after switch
+mode HPCM(0x95)=49  heartbeat OMCC(0x62)=0  timer(0x63)=117  maxfan FFFS(0xEC)=0
+set   PL1(0x37)=0 PL2(0x38)=0 PL4(0x39)=0
+EFFECTIVE PL1(0x3A)=90 W  PL2(0x3B)=130 W  PL4(0x3C)=200 W
+gpu dState NVDO(0x90)=209 ECDO(0x91)=209
+t=0s 13:20:07 cpu=56C fan=2400/2100
+t=5s 13:20:12 cpu=57C fan=2400/2100
+Busy%	Bzy_MHz	PkgTmp	PkgWatt
+4.73	3716	57	28.90
+== 13:20:17 load started
+t=10s 13:20:17 cpu=67C fan=2400/2100
+t=15s 13:20:22 cpu=82C fan=2400/2100
+98.08	3735	84	129.76
+t=20s 13:20:27 cpu=84C fan=2400/2100
+t=25s 13:20:32 cpu=87C fan=2400/2100
+98.02	3724	89	129.97
+t=30s 13:20:37 cpu=88C fan=2400/2100
+t=35s 13:20:42 cpu=91C fan=2400/2100
+!!! ABORT: CPU 91C

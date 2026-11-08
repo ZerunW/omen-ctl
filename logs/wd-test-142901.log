@@ -1,0 +1,40 @@
+== 14:29:01 sign + load
+srcversion=B5A2973DE681B51C63F1A7F profile=balanced
+14:29:03 loaded fans=2000/1800 | armed=0 tripped=0 since_kick=0 timeout=15 mode=2
+== fans manual, pwm 128
+14:29:05 kicking fans=2500/2300 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+14:29:07 kicking fans=2500/2500 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+14:29:09 kicking fans=2500/2500 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+14:29:11 kicking fans=2500/2500 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+14:29:13 kicking fans=2500/2500 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+14:29:15 kicking fans=2500/2500 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+14:29:17 kicking fans=2500/2500 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+14:29:19 kicking fans=2500/2500 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+14:29:21 kicking fans=2500/2500 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+14:29:23 kicking fans=2500/2500 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+== stop kicking
+14:29:25 silent fans=2500/2500 | armed=1 tripped=0 since_kick=2 timeout=15 mode=1
+14:29:27 silent fans=2500/2500 | armed=1 tripped=0 since_kick=4 timeout=15 mode=1
+14:29:29 silent fans=2500/2500 | armed=1 tripped=0 since_kick=6 timeout=15 mode=1
+14:29:32 silent fans=2500/2500 | armed=1 tripped=0 since_kick=8 timeout=15 mode=1
+14:29:34 silent fans=2500/2500 | armed=1 tripped=0 since_kick=10 timeout=15 mode=1
+14:29:36 silent fans=2500/2500 | armed=1 tripped=0 since_kick=12 timeout=15 mode=1
+14:29:38 silent fans=2500/2500 | armed=1 tripped=0 since_kick=14 timeout=15 mode=1
+14:29:40 silent fans=2500/2500 | armed=1 tripped=0 since_kick=16 timeout=15 mode=1
+14:29:42 silent fans=2500/2500 | armed=1 tripped=0 since_kick=18 timeout=15 mode=1
+14:29:44 silent fans=2900/2900 | armed=1 tripped=1 since_kick=20 timeout=15 mode=1
+14:29:46 silent fans=3500/3400 | armed=1 tripped=1 since_kick=22 timeout=15 mode=1
+14:29:48 silent fans=4000/4100 | armed=1 tripped=1 since_kick=24 timeout=15 mode=1
+14:29:50 silent fans=4500/4600 | armed=1 tripped=1 since_kick=26 timeout=15 mode=1
+14:29:52 silent fans=5000/5100 | armed=1 tripped=1 since_kick=28 timeout=15 mode=1
+14:29:54 silent fans=5200/5200 | armed=1 tripped=1 since_kick=30 timeout=15 mode=1
+== kick again, pwm back to 128
+14:29:56 recovered fans=4700/4800 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+14:29:58 recovered fans=4200/4300 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+14:30:00 recovered fans=3700/3800 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+14:30:02 recovered fans=3200/3300 | armed=1 tripped=0 since_kick=0 timeout=15 mode=1
+== kernel log
+Nov 08 14:29:42 zerun-omen kernel: hp_wmi: omenctl watchdog: no kick for 15s, fans forced to max level (ret 0)
+== fans back to BIOS auto (pause ~2 min while idle)
+14:30:02 auto fans=3200/3300 | armed=1 tripped=0 since_kick=0 timeout=15 mode=2
+== 14:30:02 done. log: /home/zerun/Documents/omenctl/tools/../logs/wd-test-142901.log
