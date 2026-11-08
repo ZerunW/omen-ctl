@@ -48,6 +48,7 @@ install -D -m644 "$TOP/docs/USER_GUIDE.md" "$DOC/USER_GUIDE.md"
 install -D -m644 "$TOP/docs/HARDWARE_TEST.md" "$DOC/HARDWARE_TEST.md"
 install -D -m644 "$TOP/README.md" "$DOC/README.md"
 install -D -m644 "$TOP/hpwmi-upstream/backport.patch" "$DOC/hp-wmi-backport.patch"
+install -D -m644 "$TOP/app/omenctl-gui/assets/IBMPlexSans-LICENSE.txt" "$DOC/IBMPlexSans-LICENSE.txt"
 if [ -e "$TOP/LICENSE" ]; then install -m644 "$TOP/LICENSE" "$DOC/copyright"; fi
 
 # maintainer scripts
