@@ -193,6 +193,12 @@ mod tests {
     }
 
     #[test]
+    fn packaged_example_config_equals_defaults() {
+        let c = Config::from_toml(include_str!("../../../packaging/config.toml")).unwrap();
+        assert_eq!(c, Config::default().validated().unwrap());
+    }
+
+    #[test]
     fn with_curves_rejects_bad_curve() {
         let bad = FanCurve { points: vec![crate::curve::CurvePoint { temp: 50.0, level: 30 }] };
         let ok = FanCurve::bios_default_cpu();

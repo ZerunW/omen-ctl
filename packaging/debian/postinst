@@ -1,0 +1,77 @@
+#!/bin/sh
+# omenctl postinst. Every change made here is recorded so prerm/postrm can undo it.
+set -e
+
+VERSION="@VERSION@"
+RB=/var/lib/omenctl/rollback
+NV_UNITS="nvidia-powerd.service nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service"
+
+unit_exists() { [ -n "$(systemctl list-unit-files --no-legend "$1" 2>/dev/null)" ]; }
+
+if [ "$1" = "configure" ]; then
+	# 1. group allowed to use /run/omenctl.sock
+	mkdir -p /var/lib/omenctl
+	if ! getent group omenctl >/dev/null; then
+		addgroup --system omenctl
+		touch /var/lib/omenctl/.group-created
+	fi
+
+	# 2. remember the original state of the NVIDIA units (only on first install)
+	mkdir -p "$RB"
+	if [ ! -e "$RB/units" ]; then
+		: > "$RB/units.tmp"
+		for u in $NV_UNITS; do
+			if unit_exists "$u"; then
+				echo "$u $(systemctl is-enabled "$u" 2>/dev/null || true)" >> "$RB/units.tmp"
+			else
+				echo "$u missing" >> "$RB/units.tmp"
+			fi
+		done
+		mv "$RB/units.tmp" "$RB/units"
+	fi
+
+	# 3. config: copied once, never overwritten (the daemon edits the fan curves in it)
+	mkdir -p /etc/omenctl
+	if [ ! -e /etc/omenctl/config.toml ]; then
+		cp /usr/share/omenctl/config.toml /etc/omenctl/config.toml
+	fi
+
+	# 4. patched hp-wmi through DKMS (rebuilt and MOK-signed for each new kernel)
+	if ! dkms status -m omenctl-hp-wmi -v "$VERSION" 2>/dev/null | grep -q .; then
+		dkms add -m omenctl-hp-wmi -v "$VERSION" || true
+	fi
+	if dkms build -m omenctl-hp-wmi -v "$VERSION" && dkms install -m omenctl-hp-wmi -v "$VERSION" --force; then
+		echo "omenctl: patched hp-wmi installed for kernel $(uname -r)."
+	else
+		echo "omenctl: WARNING: building the patched hp-wmi failed for $(uname -r)." >&2
+		echo "omenctl: the stock driver stays in use and omenctld will not start." >&2
+	fi
+
+	# 5. NVIDIA Dynamic Boost + suspend helpers
+	if command -v systemctl >/dev/null; then
+		systemctl daemon-reload || true
+		systemctl reload dbus.service 2>/dev/null || true
+		if unit_exists nvidia-powerd.service; then
+			systemctl enable nvidia-powerd.service || true
+		else
+			systemctl enable omenctl-nvidia-powerd.service || true
+		fi
+		for u in nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service; do
+			unit_exists "$u" && systemctl enable "$u" || true
+		done
+		# enabled for the next boot, NOT started now: start it by hand once the
+		# patched driver is loaded (see /usr/share/doc/omenctl/测试清单.md)
+		systemctl enable omenctld.service || true
+	fi
+
+	cat <<'MSG'
+
+omenctl 已安装。接下来：
+  1. 把自己加入 omenctl 组：  sudo usermod -aG omenctl $USER   （重新登录后生效）
+  2. 重启电脑，让补丁版 hp-wmi 驱动生效（或按测试清单手动重载驱动）。
+  3. 服务会在下次开机自动启动；也可以手动：sudo systemctl start omenctld
+  说明文档：/usr/share/doc/omenctl/
+MSG
+fi
+
+exit 0

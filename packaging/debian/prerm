@@ -1,0 +1,34 @@
+#!/bin/sh
+# omenctl prerm: stop the daemon safely (it returns to balanced and gives the
+# fans back to the BIOS), remove the DKMS driver, restore the NVIDIA units.
+set -e
+
+VERSION="@VERSION@"
+RB=/var/lib/omenctl/rollback
+
+if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
+	if command -v systemctl >/dev/null; then
+		systemctl stop omenctld.service 2>/dev/null || true
+		systemctl disable omenctld.service 2>/dev/null || true
+		systemctl disable --now omenctl-nvidia-powerd.service 2>/dev/null || true
+		if [ -e "$RB/units" ]; then
+			while read -r u st; do
+				case "$st" in
+					disabled) systemctl disable "$u" 2>/dev/null || true ;;
+					masked) systemctl mask "$u" 2>/dev/null || true ;;
+					*) ;; # enabled / static / missing: nothing to undo
+				esac
+			done < "$RB/units"
+		fi
+	fi
+	dkms remove -m omenctl-hp-wmi -v "$VERSION" --all 2>/dev/null || true
+	echo "omenctl: patched driver removed; the stock hp-wmi is used after the next reboot."
+fi
+
+if [ "$1" = "upgrade" ]; then
+	# the new version's postinst rebuilds the driver; stop the old daemon cleanly
+	systemctl stop omenctld.service 2>/dev/null || true
+	dkms remove -m omenctl-hp-wmi -v "$VERSION" --all 2>/dev/null || true
+fi
+
+exit 0

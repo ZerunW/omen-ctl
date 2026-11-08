@@ -1,0 +1,36 @@
+# omenctl 配置文件（/etc/omenctl/config.toml）
+# 每一项都有安全的默认值；删掉某一行就等于用默认值。
+# 改完后执行 sudo systemctl restart omenctld 生效。
+# 配置有错误时服务会拒绝启动（看 journalctl -u omenctld），机器保持安全状态。
+
+# 没有保存过状态时（第一次启动）使用的模式：power_saver / balanced / unleashed
+default_mode = "balanced"
+
+# 满血模式下写入 CPU+显卡并发功率 75 W（显卡上限因此到 115 W）
+unleashed_concurrent_75w = true
+
+[rapl]
+# 可选：每个模式额外写 intel_rapl 的 PL1/PL2（单位 W，要求 0 < PL1 <= PL2 <= 130）。
+# 不写 = 不动 RAPL。例：
+# balanced = [35, 45]
+
+[fan]
+# 降温平滑系数（0.01–1）：每秒向下走剩余差距的这个比例；升温立即跟随。
+fall = 0.4
+# BIOS 风扇表最高档（8D3F 固定 52，即 5200 rpm），不要改。
+table_max = 52
+# 风扇曲线 [fan.cpu_curve] / [fan.gpu_curve] 不写时用内置的 BIOS 默认表。
+# 在图形界面里保存曲线时，服务会把它们写到本文件末尾（其他内容和注释保留）。
+
+[protect]
+# CPU 或显卡温度达到这个值（°C）时风扇立即最高档
+fans_max_at = 92.0
+# 达到这个温度并持续 drop_after_s 秒，暂时退出满血、回到平衡
+drop_at = 95.0
+drop_after_s = 10
+# 降到这个温度以下并持续 restore_after_s 秒后，恢复你选的模式
+restore_below = 80.0
+restore_after_s = 30
+# 风扇核对：实际转速连续 rpm_fail_after_s 秒低于目标 x rpm_ratio，判定故障
+rpm_ratio = 0.7
+rpm_fail_after_s = 10

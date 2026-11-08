@@ -1,0 +1,20 @@
+#!/bin/sh
+# omenctl postrm. "purge" also deletes the config, saved state and the group
+# (only if this package created it).
+set -e
+
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+	command -v systemctl >/dev/null && systemctl daemon-reload 2>/dev/null || true
+	systemctl reload dbus.service 2>/dev/null || true
+fi
+
+if [ "$1" = "purge" ]; then
+	rm -f /run/omenctl.sock
+	rm -rf /etc/omenctl
+	if [ -e /var/lib/omenctl/.group-created ] && getent group omenctl >/dev/null; then
+		delgroup --system omenctl 2>/dev/null || groupdel omenctl 2>/dev/null || true
+	fi
+	rm -rf /var/lib/omenctl
+fi
+
+exit 0

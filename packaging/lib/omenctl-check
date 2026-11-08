@@ -1,0 +1,12 @@
+#!/bin/sh
+# ExecCondition for omenctld: exit 0 = start, exit 1..254 = skip quietly.
+board=$(cat /sys/class/dmi/id/board_name 2>/dev/null)
+if [ "$board" != "8D3F" ]; then
+	echo "omenctl: board '$board' is not 8D3F, not starting" >&2
+	exit 1
+fi
+if [ ! -e /sys/devices/platform/hp-wmi/omenctl_kick ]; then
+	echo "omenctl: patched hp-wmi driver not loaded (no omenctl_kick); reboot or reload hp-wmi" >&2
+	exit 1
+fi
+exit 0

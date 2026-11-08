@@ -1,0 +1,14 @@
+# NVIDIA Dynamic Boost daemon. Ubuntu's driver packages ship /usr/bin/nvidia-powerd
+# but not always a unit; this one is only enabled when no nvidia-powerd.service exists.
+[Unit]
+Description=NVIDIA Dynamic Boost (nvidia-powerd), installed by omenctl
+ConditionPathExists=/usr/bin/nvidia-powerd
+Conflicts=nvidia-powerd.service
+
+[Service]
+Type=dbus
+BusName=nvidia.powerd.server
+ExecStart=/usr/bin/nvidia-powerd
+
+[Install]
+WantedBy=multi-user.target

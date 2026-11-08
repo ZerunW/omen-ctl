@@ -1,0 +1,28 @@
+[Unit]
+Description=omenctl performance and fan control (HP OMEN 16, board 8D3F)
+Documentation=file:///usr/share/doc/omenctl/使用说明.md
+After=systemd-modules-load.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+# Skip (not fail) on other machines or while the stock hp-wmi driver is loaded.
+ExecCondition=/usr/lib/omenctl/omenctl-check
+ExecStart=/usr/sbin/omenctld
+# Runs after every stop, including crashes and watchdog kills.
+ExecStopPost=/usr/lib/omenctl/omenctl-safe-exit
+WatchdogSec=15
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=150
+StateDirectory=omenctl
+ConfigurationDirectory=omenctl
+ProtectSystem=strict
+ReadWritePaths=/etc/omenctl /run
+ProtectHome=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

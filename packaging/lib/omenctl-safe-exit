@@ -1,0 +1,54 @@
+#!/bin/sh
+# ExecStopPost of omenctld. After a clean stop the daemon has already returned
+# the machine to a safe state, so nothing is done. After a crash, watchdog kill
+# or failed start: fans to the top level, balanced profile, and only once the CPU
+# is below 60 C hand the fans back to the BIOS (the EC stops them for about two
+# minutes when it takes over, so that must only happen when cool).
+# Uses only standard sysfs files, never WMI/EC directly.
+
+# Never touch a machine the daemon was not allowed to run on (ExecCondition skip).
+/usr/lib/omenctl/omenctl-check 2>/dev/null || exit 0
+
+if [ "$SERVICE_RESULT" = "success" ] && [ "${EXIT_STATUS:-0}" = "0" ]; then
+	exit 0
+fi
+echo "omenctl-safe-exit: daemon stopped abnormally (result=$SERVICE_RESULT status=$EXIT_STATUS)" >&2
+
+hw=""
+for d in /sys/devices/platform/hp-wmi/hwmon/hwmon*; do
+	[ -e "$d/pwm1_enable" ] && hw=$d && break
+done
+
+cpu_temp() {
+	for h in /sys/class/hwmon/hwmon*; do
+		if [ "$(cat "$h/name" 2>/dev/null)" = "coretemp" ]; then
+			t=$(cat "$h/temp1_input" 2>/dev/null) && echo $((t / 1000)) && return
+		fi
+	done
+	echo 100 # unknown = treat as hot
+}
+
+if [ -n "$hw" ]; then
+	echo 1 > "$hw/pwm1_enable" 2>/dev/null
+	echo 255 > "$hw/pwm1" 2>/dev/null
+	echo 255 > "$hw/pwm2" 2>/dev/null
+fi
+echo balanced > /sys/firmware/acpi/platform_profile 2>/dev/null
+
+if [ -n "$hw" ]; then
+	# wait (max ~120 s, inside TimeoutStopSec=150) for the CPU to cool down
+	i=0
+	while [ "$(cpu_temp)" -ge 60 ] && [ $i -lt 60 ]; do
+		[ -e /sys/devices/platform/hp-wmi/omenctl_kick ] && echo 1 > /sys/devices/platform/hp-wmi/omenctl_kick 2>/dev/null
+		sleep 2
+		i=$((i + 1))
+	done
+	if [ "$(cpu_temp)" -lt 60 ]; then
+		echo 2 > "$hw/pwm1_enable" 2>/dev/null
+		echo "omenctl-safe-exit: fans returned to BIOS at $(cpu_temp) C" >&2
+	else
+		# still hot: leave fans at the top level in manual mode (driver keeps them there)
+		echo "omenctl-safe-exit: CPU still $(cpu_temp) C, leaving fans at maximum" >&2
+	fi
+fi
+exit 0
