@@ -33,6 +33,9 @@ install -D -m644 "$HERE/systemd/omenctld.service" "$PKG/usr/lib/systemd/system/o
 install -D -m644 "$HERE/systemd/omenctl-nvidia-powerd.service" "$PKG/usr/lib/systemd/system/omenctl-nvidia-powerd.service"
 install -D -m644 "$HERE/systemd/omenctl-nvidia-powerd.conf" "$PKG/usr/share/dbus-1/system.d/omenctl-nvidia-powerd.conf"
 install -D -m644 "$HERE/omenctl-gui.desktop" "$PKG/usr/share/applications/omenctl-gui.desktop"
+for s in 16 24 32 48 64 128 256 512; do
+	install -D -m644 "$HERE/icon/omenctl-gui-$s.png" "$PKG/usr/share/icons/hicolor/${s}x${s}/apps/omenctl-gui.png"
+done
 install -D -m644 "$HERE/config.toml" "$PKG/usr/share/omenctl/config.toml"
 
 # DKMS source of the patched hp-wmi

@@ -6,6 +6,7 @@ pub mod config;
 pub mod controller;
 pub mod curve;
 pub mod hw;
+pub mod power;
 pub mod proto;
 
 use serde::{Deserialize, Serialize};

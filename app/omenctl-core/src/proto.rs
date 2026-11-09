@@ -1,7 +1,9 @@
 //! Line-delimited JSON protocol between the CLI/GUI and the daemon over
 //! /run/omenctl.sock. One request per line, one response per line.
 
+use crate::config::ModesConfig;
 use crate::curve::FanCurve;
+use crate::power::PowerInfo;
 use crate::{FanMode, Mode};
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +20,10 @@ pub enum Request {
     /// Replace both fan curves. The daemon validates them, writes them to
     /// /etc/omenctl/config.toml and applies them immediately.
     SetCurves { cpu: FanCurve, gpu: FanCurve },
+    /// Startup and power-source mode rules.
+    GetSettings,
+    /// Replace the mode rules; written to /etc/omenctl/config.toml.
+    SetSettings { modes: ModesConfig },
 }
 
 /// Longest request line the daemon accepts (bytes).
@@ -42,6 +48,9 @@ pub struct Status {
     pub cpu_power_w: Option<f32>,
     pub gpu_power_w: Option<f32>,
     pub ac_online: Option<bool>,
+    /// Adapter, battery and USB-C power details (display only).
+    #[serde(default)]
+    pub power: PowerInfo,
     /// Active protection / fault messages (empty when all is well).
     pub alerts: Vec<String>,
 }
@@ -51,6 +60,7 @@ pub struct Status {
 pub enum Response {
     Ok { status: Status },
     Curves { cpu: FanCurve, gpu: FanCurve },
+    Settings { modes: ModesConfig },
     Error { message: String },
 }
 
@@ -108,5 +118,7 @@ mod tests {
         .unwrap();
         assert!(matches!(c, Request::SetCurves { .. }));
         assert_eq!(serde_json::to_string(&Request::GetCurves).unwrap(), r#"{"cmd":"get_curves"}"#);
+        let m: Request = serde_json::from_str(r#"{"cmd":"set_settings","modes":{"startup":"keep","on_ac":"unleashed","on_battery":"balanced"}}"#).unwrap();
+        assert!(matches!(m, Request::SetSettings { modes } if modes.on_ac == crate::config::ModeRule::Unleashed));
     }
 }

@@ -17,6 +17,8 @@ pub struct Sensors {
     pub gpu_temp: Option<f32>,
     pub fan_rpm: [Option<u32>; 2],
     pub ac_online: Option<bool>,
+    /// Laptop battery charge (%).
+    pub battery_percent: Option<u8>,
 }
 
 pub trait Hw {
@@ -31,6 +33,10 @@ pub trait Hw {
     fn kick(&mut self) -> io::Result<()>;
     fn set_concurrent_75w(&mut self) -> io::Result<()>;
     fn set_rapl(&mut self, pl1_w: u32, pl2_w: u32) -> io::Result<()>;
+    /// CPU energy/performance preference (intel_pstate EPP) of cpu0.
+    fn cpu_epp(&self) -> io::Result<String>;
+    /// Set the EPP on every CPU.
+    fn set_cpu_epp(&mut self, epp: &str) -> io::Result<()>;
 }
 
 /// Paths relative to a root (normally "/").
@@ -106,7 +112,8 @@ impl Hw for SysfsHw {
             }
         }
         let ac_online = read_trim(&self.p("sys/class/power_supply/ADP1/online")).ok().map(|s| s == "1");
-        Sensors { cpu_temp, gpu_temp, fan_rpm, ac_online }
+        let battery_percent = crate::power::battery_percent(&self.root);
+        Sensors { cpu_temp, gpu_temp, fan_rpm, ac_online, battery_percent }
     }
 
     fn platform_profile(&self) -> io::Result<String> {
@@ -146,6 +153,30 @@ impl Hw for SysfsHw {
         write(&z.join("constraint_0_power_limit_uw"), &(pl1_w as u64 * 1_000_000).to_string())?;
         write(&z.join("constraint_1_power_limit_uw"), &(pl2_w as u64 * 1_000_000).to_string())
     }
+
+    fn cpu_epp(&self) -> io::Result<String> {
+        read_trim(&self.p("sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference"))
+    }
+
+    fn set_cpu_epp(&mut self, epp: &str) -> io::Result<()> {
+        let dir = self.p("sys/devices/system/cpu");
+        let mut n = 0;
+        for e in fs::read_dir(&dir)?.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !(name.starts_with("cpu") && name[3..].chars().all(|c| c.is_ascii_digit()) && name.len() > 3) {
+                continue;
+            }
+            let f = e.path().join("cpufreq/energy_performance_preference");
+            if f.exists() {
+                write(&f, epp)?;
+                n += 1;
+            }
+        }
+        if n == 0 {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "no energy_performance_preference files"));
+        }
+        Ok(())
+    }
 }
 
 /// Extra telemetry for status display (not used for control decisions).
@@ -177,6 +208,9 @@ mod tests {
         mk("sys/class/hwmon/hwmon9/temp1_input", "56000\n");
         mk("sys/class/power_supply/ADP1/online", "1\n");
         mk("sys/bus/pci/devices/0000:01:00.0/power/runtime_status", "suspended\n");
+        mk("sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference", "performance\n");
+        mk("sys/devices/system/cpu/cpu1/cpufreq/energy_performance_preference", "performance\n");
+        mk("sys/devices/system/cpu/cpufreq/policy0/energy_performance_preference", "performance\n");
         d
     }
 
@@ -202,6 +236,9 @@ mod tests {
         assert_eq!(read_trim(&h.join("hwmon/hwmon7/pwm1_enable")).unwrap(), "1");
         assert_eq!(read_trim(&h.join("hwmon/hwmon7/pwm2")).unwrap(), "200");
         assert_eq!(read_trim(&h.join("omenctl_concurrent_tdp")).unwrap(), "75");
+        hw.set_cpu_epp("balance_performance").unwrap();
+        assert_eq!(hw.cpu_epp().unwrap(), "balance_performance");
+        assert_eq!(read_trim(&root.join("sys/devices/system/cpu/cpu1/cpufreq/energy_performance_preference")).unwrap(), "balance_performance");
         fs::write(root.join("sys/bus/pci/devices/0000:01:00.0/power/runtime_status"), "active").unwrap();
         assert_eq!(hw.sensors().gpu_temp, Some(70.0));
         fs::remove_dir_all(root).ok();

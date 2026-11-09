@@ -94,31 +94,47 @@ impl FanCurve {
     }
 }
 
-/// Asymmetric smoothing: follow increases immediately, decay decreases by `fall`
-/// (0.4 = move 40% of the way down per step). Output rounded up.
+/// Fan level smoothing: follow increases immediately; after the last increase
+/// hold the level for `hold_s` seconds, then come down by at most `fall_per_s`
+/// levels per second (1 level = 100 rpm). Output rounded up.
 #[derive(Debug, Clone)]
 pub struct Smoother {
-    pub fall: f32,
+    pub fall_per_s: f32,
+    pub hold_s: f64,
     value: Option<f32>,
+    last_rise: f64,
+    last_step: f64,
 }
 
 impl Smoother {
-    pub fn new(fall: f32) -> Self {
-        Smoother { fall: fall.clamp(0.01, 1.0), value: None }
+    pub fn new(fall_per_s: f32, hold_s: f64) -> Self {
+        Smoother { fall_per_s: fall_per_s.max(0.01), hold_s: hold_s.max(0.0), value: None, last_rise: 0.0, last_step: 0.0 }
     }
 
     pub fn reset(&mut self) {
         self.value = None;
     }
 
-    pub fn step(&mut self, target: u8) -> u8 {
+    /// `now` is monotonic seconds.
+    pub fn step(&mut self, target: u8, now: f64) -> u8 {
         let t = target as f32;
         let v = match self.value {
-            None => t,
-            Some(prev) if t >= prev => t,
-            Some(prev) => prev + self.fall * (t - prev),
+            None => {
+                self.last_rise = now;
+                t
+            }
+            Some(prev) if t >= prev => {
+                self.last_rise = now;
+                t
+            }
+            Some(prev) if now - self.last_rise < self.hold_s => prev,
+            Some(prev) => {
+                let dt = (now - self.last_step).clamp(0.0, 5.0) as f32;
+                (prev - self.fall_per_s * dt).max(t)
+            }
         };
         self.value = Some(v);
+        self.last_step = now;
         (v.ceil() as i32).clamp(LEVEL_MIN as i32, LEVEL_MAX as i32) as u8
     }
 }
@@ -186,13 +202,22 @@ mod tests {
     }
 
     #[test]
-    fn smoother_rises_fast_falls_slow() {
-        let mut s = Smoother::new(0.4);
-        assert_eq!(s.step(30), 30);
-        assert_eq!(s.step(50), 50); // immediate rise
-        assert_eq!(s.step(20), 38); // 50 + 0.4*(20-50) = 38
-        assert_eq!(s.step(20), 31); // 38 - 7.2 = 30.8 -> 31
-        assert_eq!(s.step(45), 45);
+    fn smoother_rises_fast_holds_then_falls_slowly() {
+        let mut s = Smoother::new(0.5, 15.0);
+        assert_eq!(s.step(30, 0.0), 30);
+        assert_eq!(s.step(50, 1.0), 50); // immediate rise
+        assert_eq!(s.step(20, 2.0), 50); // held
+        assert_eq!(s.step(20, 15.9), 50); // still held
+        assert_eq!(s.step(20, 16.0), 50); // hold over, falls from here
+        assert_eq!(s.step(20, 18.0), 49); // 50 - 0.5*2
+        assert_eq!(s.step(20, 20.0), 48);
+        assert_eq!(s.step(45, 21.0), 48, "below current: keeps falling slowly");
+        assert_eq!(s.step(49, 22.0), 49, "rise is immediate and restarts the hold");
+        assert_eq!(s.step(20, 30.0), 49);
+        // never below the target
+        let mut s = Smoother::new(5.0, 0.0);
+        s.step(40, 0.0);
+        assert_eq!(s.step(38, 10.0), 38);
     }
 
     #[test]

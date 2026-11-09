@@ -84,6 +84,17 @@ pub fn save_curves(
     write_atomic(path, out.as_bytes(), 0o644).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Write new (already validated) mode rules into the config file, keeping comments.
+pub fn save_modes(path: &Path, m: &omenctl_core::config::ModesConfig) -> Result<(), String> {
+    let existing = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    let out = omenctl_core::config::with_modes(&existing, m)?;
+    write_atomic(path, out.as_bytes(), 0o644).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

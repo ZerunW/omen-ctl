@@ -1656,6 +1656,36 @@ static ssize_t omenctl_concurrent_tdp_store(struct device *dev,
 	return count;
 }
 
+/*
+ * omenctl addition (board 8D3F only): rated power of the connected adapter.
+ * Read-only BIOS query 0x0F (HPWMI_READ, no input data). In the decompiled DSDT
+ * (WMID.GSAS) it only reads EC fields and returns 4 bytes:
+ *   [0] adapter status, [1] 0xAE, [2] 0, [3] rated power in units of 5 W
+ *   (0 = no adapter, 0xFF = unknown). The BIOS tables map the EC adapter id to
+ *   9, 13, 18, 24, 27, 30, 36, 40, 46, 56, 66, 72 (barrel: 45 ... 360 W) and
+ *   1, 3, 6, 9, 13, 18, 20, 28 (USB-C: 5 ... 140 W).
+ * Prints the power in watts; -ENODATA when there is no adapter or it is unknown.
+ */
+#define OMENCTL_ADAPTER_QUERY	0x0F
+static ssize_t omenctl_adapter_w_show(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	u8 data[4] = {};
+	int ret;
+
+	if (!dmi_match(DMI_BOARD_NAME, "8D3F"))
+		return -EOPNOTSUPP;
+
+	ret = hp_wmi_perform_query(OMENCTL_ADAPTER_QUERY, HPWMI_READ,
+				   &data, 0, sizeof(data));
+	if (ret)
+		return ret < 0 ? ret : -EIO;
+	if (data[3] == 0 || data[3] == 0xFF)
+		return -ENODATA;
+
+	return sysfs_emit(buf, "%u\n", data[3] * 5);
+}
+
 static ssize_t omenctl_kick_store(struct device *dev,
 				  struct device_attribute *attr,
 				  const char *buf, size_t count)
@@ -1700,6 +1730,7 @@ static DEVICE_ATTR_RW(postcode);
 static DEVICE_ATTR_RW(gpu_mux_mode);
 static DEVICE_ATTR_WO(omenctl_concurrent_tdp);
 static DEVICE_ATTR_RW(omenctl_kick);
+static DEVICE_ATTR_RO(omenctl_adapter_w);
 
 static struct attribute *hp_wmi_attrs[] = {
 	&dev_attr_display.attr,
@@ -1711,6 +1742,7 @@ static struct attribute *hp_wmi_attrs[] = {
 	&dev_attr_gpu_mux_mode.attr,
 	&dev_attr_omenctl_concurrent_tdp.attr,
 	&dev_attr_omenctl_kick.attr,
+	&dev_attr_omenctl_adapter_w.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(hp_wmi);

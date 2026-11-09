@@ -81,6 +81,10 @@ struct Daemon<H: Hw> {
     rapl: telemetry::RaplPower,
     gpu: Option<gpu::GpuMonitor>,
     cpu_w: Option<f32>,
+    root: PathBuf,
+    power: omenctl_core::power::PowerInfo,
+    /// Cached rated adapter power and when it was last read.
+    adapter: (Option<u32>, Option<f64>),
     last_alerts: Vec<String>,
     start: Instant,
 }
@@ -103,13 +107,24 @@ impl<H: Hw> Daemon<H> {
     fn fill(&self, mut s: Status) -> Status {
         s.cpu_power_w = self.cpu_w;
         s.gpu_power_w = self.gpu.as_ref().and_then(|g| g.power_w());
+        s.power = self.power.clone();
         s
     }
 
     fn tick(&mut self) -> Status {
         let now = self.now();
         let st = self.ctl.tick(now);
+        for e in self.ctl.take_events() {
+            eprintln!("{e}");
+        }
         self.cpu_w = self.rapl.sample(now);
+        let mut power = omenctl_core::power::read(&self.root);
+        let stale = self.adapter.1.is_none_or(|t| now - t >= 60.0) || power.ac_online != self.power.ac_online;
+        if stale {
+            self.adapter = (if power.ac_online == Some(true) { omenctl_core::power::read_adapter_w(&self.root) } else { None }, Some(now));
+        }
+        power.adapter_w = self.adapter.0;
+        self.power = power;
         if st.alerts != self.last_alerts {
             for a in st.alerts.iter().filter(|a| !self.last_alerts.contains(a)) {
                 eprintln!("ALERT: {a}");
@@ -144,6 +159,22 @@ impl<H: Hw> Daemon<H> {
                 eprintln!("request: set curves");
                 self.set_curves(cpu, gpu)
             }
+            Request::GetSettings => return Response::Settings { modes: self.ctl.modes() },
+            Request::SetSettings { modes } => {
+                eprintln!(
+                    "request: mode rules startup={} ac={} battery={} low={} at {}%",
+                    modes.startup.as_str(),
+                    modes.on_ac.as_str(),
+                    modes.on_battery.as_str(),
+                    modes.on_low_battery.as_str(),
+                    modes.low_battery_percent
+                );
+                if let Err(message) = files::save_modes(&self.config_path, &modes) {
+                    return Response::Error { message: format!("cannot write the config file: {message}") };
+                }
+                self.ctl.set_modes(modes);
+                return Response::Settings { modes };
+            }
         };
         self.persist();
         match resp {
@@ -166,11 +197,24 @@ fn run() -> Result<(), String> {
     let args = parse_args()?;
     let cfg = files::load_config(&args.config)?;
     let saved = files::load_state(&args.state);
-    let (mode, fan) = match saved {
-        Some(s) => (s.mode, s.fan),
-        None => (cfg.default_mode, FanMode::Curve),
-    };
-    eprintln!("omenctld {} starting: mode {mode:?}, fan {fan:?}", env!("CARGO_PKG_VERSION"));
+    let p0 = omenctl_core::power::read(&args.root);
+    let (ac, bat) = (p0.ac_online, p0.battery.as_ref().and_then(|b| b.percent));
+    let mode = cfg.modes.startup_mode(ac, bat, saved.map(|s| s.mode), cfg.default_mode);
+    let fan = saved.map_or(FanMode::Curve, |s| s.fan);
+    eprintln!(
+        "omenctld {} starting: mode {mode:?}, fan {fan:?} (rules: startup={} ac={} battery={} low={} at {}%; on {})",
+        env!("CARGO_PKG_VERSION"),
+        cfg.modes.startup.as_str(),
+        cfg.modes.on_ac.as_str(),
+        cfg.modes.on_battery.as_str(),
+        cfg.modes.on_low_battery.as_str(),
+        cfg.modes.low_battery_percent,
+        match ac {
+            Some(true) => "AC".to_string(),
+            Some(false) => format!("battery {}%", bat.map_or("?".into(), |b| b.to_string())),
+            None => "unknown power source".to_string(),
+        }
+    );
 
     let term = Arc::new(AtomicBool::new(false));
     for sig in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
@@ -192,6 +236,9 @@ fn run() -> Result<(), String> {
         rapl: telemetry::RaplPower::new(&args.root),
         gpu,
         cpu_w: None,
+        root: args.root.clone(),
+        power: Default::default(),
+        adapter: (None, None),
         last_alerts: Vec::new(),
         start: Instant::now(),
     };
