@@ -1,0 +1,26 @@
+#!/bin/sh
+# Called by the package's postinst after an upgrade. prerm stopped omenctld and
+# left a marker if it was running. Start it again right away when the driver in
+# memory is exactly the one now installed (same srcversion, and it is the
+# patched driver); otherwise a reboot is needed to load the new driver first.
+#
+# Exit: 0 started, 1 nothing to do (service was not running), 2 reboot needed,
+#       3 start failed.
+# OMENCTL_ROOT is only for tests (a fake / with run/ and sys/).
+
+ROOT=${OMENCTL_ROOT:-}
+MARK="$ROOT/run/omenctl-restart-after-upgrade"
+
+[ -e "$MARK" ] || exit 1
+rm -f "$MARK"
+
+loaded=$(cat "$ROOT/sys/module/hp_wmi/srcversion" 2>/dev/null)
+installed=$(modinfo -k "$(uname -r)" -F srcversion hp_wmi 2>/dev/null)
+
+if [ -z "$loaded" ] || [ "$loaded" != "$installed" ] || [ ! -e "$ROOT/sys/devices/platform/hp-wmi/omenctl_kick" ]; then
+	exit 2
+fi
+
+systemctl start omenctld.service 2>/dev/null || exit 3
+systemctl is-active --quiet omenctld.service || exit 3
+exit 0

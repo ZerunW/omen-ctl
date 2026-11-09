@@ -2,6 +2,12 @@
 
 All notable changes. Versions are the `.deb` / workspace version.
 
+## 0.2.6 - 2026-11-08
+
+- Upgrades no longer leave the service stopped: if it was running and the driver in
+  memory is exactly the newly installed one, it is started again. If the driver
+  changed, the installer says to reboot.
+
 ## 0.2.5 - 2026-11-08
 
 - Fixed: `unleashed_concurrent_75w` in the example config sat below `[modes]`, so TOML

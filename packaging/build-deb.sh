@@ -29,6 +29,7 @@ strip "$PKG/usr/sbin/omenctld" "$PKG/usr/bin/omenctl" "$PKG/usr/bin/omenctl-gui"
 # helpers, units, policy, desktop entry, example config
 install -D -m755 "$HERE/lib/omenctl-check" "$PKG/usr/lib/omenctl/omenctl-check"
 install -D -m755 "$HERE/lib/omenctl-safe-exit" "$PKG/usr/lib/omenctl/omenctl-safe-exit"
+install -D -m755 "$HERE/lib/omenctl-upgrade-restart" "$PKG/usr/lib/omenctl/omenctl-upgrade-restart"
 install -D -m644 "$HERE/systemd/omenctld.service" "$PKG/usr/lib/systemd/system/omenctld.service"
 install -D -m644 "$HERE/systemd/omenctl-nvidia-powerd.service" "$PKG/usr/lib/systemd/system/omenctl-nvidia-powerd.service"
 install -D -m644 "$HERE/systemd/omenctl-nvidia-powerd.conf" "$PKG/usr/share/dbus-1/system.d/omenctl-nvidia-powerd.conf"

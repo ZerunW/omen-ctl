@@ -59,9 +59,24 @@ if [ "$1" = "configure" ]; then
 		for u in nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service; do
 			unit_exists "$u" && systemctl enable "$u" || true
 		done
-		# enabled for the next boot, NOT started now: start it by hand once the
-		# patched driver is loaded (see /usr/share/doc/omenctl/HARDWARE_TEST.md)
+		# enabled for the next boot. On a first install it is NOT started now
+		# (the stock driver is still loaded); after an upgrade it is started
+		# again only if the driver in memory is the one just installed.
 		systemctl enable omenctld.service || true
+	fi
+
+	RESTART=1
+	if [ -n "$2" ]; then
+		# prerm of 0.2.5 and older leaves no marker: count an enabled service as running
+		if dpkg --compare-versions "$2" lt 0.2.6 && systemctl is-enabled --quiet omenctld.service 2>/dev/null; then
+			touch /run/omenctl-restart-after-upgrade
+		fi
+		if [ "$DRIVER_OK" = 1 ]; then
+			/usr/lib/omenctl/omenctl-upgrade-restart && RESTART=0 || RESTART=$?
+		else
+			rm -f /run/omenctl-restart-after-upgrade
+			RESTART=none # the driver warning below says it all
+		fi
 	fi
 
 	if [ "$DRIVER_OK" = 0 ]; then
@@ -77,6 +92,22 @@ an enrolled MOK key. Fix the cause, then run:
   sudo dkms install omenctl-hp-wmi/$VERSION && sudo reboot
 ************************************************************************
 MSG
+	fi
+
+	if [ -n "$2" ]; then
+		case "$RESTART" in
+		0) echo "omenctl: upgraded from $2; the driver is unchanged, omenctld is running again." ;;
+		1) echo "omenctl: upgraded from $2. omenctld was not running; it starts at the next boot." ;;
+		2) cat <<MSG
+
+omenctl: upgraded from $2. The driver changed: REBOOT to load it.
+Until then omenctld stays stopped (balanced mode, fans controlled by the BIOS).
+MSG
+		;;
+		none) ;;
+		*) echo "omenctl: upgraded from $2, but omenctld failed to start: journalctl -u omenctld" >&2 ;;
+		esac
+		exit 0
 	fi
 
 	cat <<'MSG'

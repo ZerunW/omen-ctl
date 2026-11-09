@@ -26,7 +26,12 @@ if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
 fi
 
 if [ "$1" = "upgrade" ]; then
-	# the new version's postinst rebuilds the driver; stop the old daemon cleanly
+	# the new version's postinst rebuilds the driver; stop the old daemon cleanly.
+	# If it was running, leave a marker so postinst can start it again when the
+	# driver did not change (/run: a reboot in between clears it).
+	if systemctl is-active --quiet omenctld.service 2>/dev/null; then
+		touch /run/omenctl-restart-after-upgrade
+	fi
 	systemctl stop omenctld.service 2>/dev/null || true
 	dkms remove -m omenctl-hp-wmi -v "$VERSION" --all 2>/dev/null || true
 fi
