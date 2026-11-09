@@ -3,7 +3,7 @@
 # Runs as a normal user (member of the omenctl group); it only creates load and
 # reads values. Fans, power mode and overheat protection stay with omenctld.
 #
-#   tools/stress-test.sh [log file] [cpu_s] [gpu_s] [both_s]
+#   tools/stress-test.sh [log file] [cpu_s] [gpu_s] [both_s]   (0 skips a phase)
 #
 # CPU load: openssl SHA-256 on every logical CPU. GPU load: hashcat brute-forcing
 # a made-up SHA-256 hash (CUDA). Samples every 2 s: mode, temperatures, CPU/GPU
@@ -50,8 +50,9 @@ sample() {
 	if [ "$ct" -ge 98 ] || [ "$gt" -ge 90 ]; then echo "!!! limit reached (CPU ${ct} C, GPU ${gt} C): stopping load"; stop_load; return 1; fi
 }
 
-phase() { # name seconds loads...
+phase() { # name seconds loads... (0 seconds = skip)
 	local name=$1 secs=$2; shift 2
+	[ "$secs" -gt 0 ] || return 0
 	echo
 	echo "== $(date +%T) $name, $secs s"
 	echo "   t mode        cpuC  gpuC   cpuW   gpuW  gpu limit,MHz,util,state   P-core E-core  fans      alerts"

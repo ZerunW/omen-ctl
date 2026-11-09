@@ -74,9 +74,9 @@ troubleshooting: [docs/USER_GUIDE.md](docs/USER_GUIDE.md). Changes per version:
 Bluetooth keyboard can't wake the laptop from suspend? That is a BlueZ problem, not an
 OMEN one; see the companion project [ubuntu-ble-wake-fix](https://github.com/ZerunW/ubuntu-ble-wake-fix).
 
-| Light theme, on battery | Default modes |
+| Light theme, on USB-C power (90 W) | Default modes |
 |---|---|
-| ![light](docs/screenshots/light-battery.png) | ![defaults](docs/screenshots/default-modes.png) |
+| ![light](docs/screenshots/light.png) | ![defaults](docs/screenshots/default-modes.png) |
 
 ## How it works (8D3F specifics)
 
