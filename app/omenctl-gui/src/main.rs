@@ -1,6 +1,7 @@
 //! omenctl-gui: desktop front end for omenctld (runs as a normal user in the
 //! omenctl group). All changes go through the service; nothing here touches sysfs.
 
+mod chrome;
 mod edit;
 mod theme;
 
@@ -175,6 +176,7 @@ struct App {
     curve_open: bool,
     /// Light / dark / follow the desktop; saved in ~/.config/omenctl/gui.toml.
     theme: egui::ThemePreference,
+    desk: chrome::Desktop,
 }
 
 const THEMES: [egui::ThemePreference; 3] =
@@ -841,8 +843,21 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Transparent, so the rounded corners of the window show the desktop.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let p = theme::palette(ui.ctx());
+        let ctx = ui.ctx().clone();
+        chrome::update_zoom(&ctx, self.desk.text_scale);
+        let on_edge = chrome::edge_resize(&ctx);
+        let window = egui::Frame::NONE.fill(p.bg).corner_radius(chrome::window_radius(&ctx)).stroke(if chrome::maximized(&ctx) {
+            Stroke::NONE
+        } else {
+            chrome::outline(&p)
+        });
         let (status, hist, conn_err, last_err, curves, gen, modes, modes_saved) = {
             let mut s = self.shared.lock().unwrap();
             if s.last_err.as_ref().is_some_and(|(_, t)| t.elapsed() > Duration::from_secs(8)) {
@@ -873,9 +888,10 @@ impl eframe::App for App {
             ui.ctx().request_repaint_after(Duration::from_millis(500));
         }
 
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(p.bg).inner_margin(egui::Margin::symmetric(22, 18)))
-            .show(ui, |ui| {
+        egui::CentralPanel::default().frame(window).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            chrome::header_bar(ui, &p, &self.desk, on_edge);
+            egui::Frame::NONE.inner_margin(egui::Margin { left: 22, right: 22, top: 0, bottom: 14 }).show(ui, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     let w = ui.available_width().min(1040.0);
                     let pad = (ui.available_width() - w) / 2.0;
@@ -928,6 +944,7 @@ impl eframe::App for App {
                     });
                 });
             });
+        });
     }
 }
 
@@ -949,12 +966,17 @@ fn main() -> eframe::Result {
         }
     }
     let theme_pref = theme_arg.or_else(load_theme).unwrap_or(egui::ThemePreference::System);
+    let desk = chrome::Desktop::read();
+    let ts = desk.text_scale;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("OMEN Control")
             .with_app_id("omenctl-gui")
-            .with_inner_size([1000.0, 800.0])
+            // sizes in desktop pixels; the zoom (text scale) is applied after start
+            .with_inner_size([(1000.0 * ts).min(1280.0), (800.0 * ts).min(920.0)])
             .with_min_inner_size([560.0, 480.0])
+            .with_decorations(false)
+            .with_transparent(true)
             .with_icon(egui::IconData {
                 rgba: include_bytes!("../../../packaging/icon/omenctl-gui-256.rgba").to_vec(),
                 width: 256,
@@ -985,6 +1007,7 @@ fn main() -> eframe::Result {
                 manual_touched: false,
                 curve_open: false,
                 theme: theme_pref,
+                desk,
             }))
         }),
     )

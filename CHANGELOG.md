@@ -2,6 +2,15 @@
 
 All notable changes. Versions are the `.deb` / workspace version.
 
+## Unreleased
+
+- Desktop app: draws its own window frame with rounded corners and GNOME-style
+  window buttons (order taken from the desktop's button layout) instead of the
+  dark fallback title bar on Wayland; resize from the edges, drag and
+  double-click the top bar.
+- Desktop app: text follows the desktop text scaling (GNOME "Large text") and grows
+  with the window.
+
 ## 0.2.6 - 2026-11-08
 
 - Upgrades no longer leave the service stopped: if it was running and the driver in
