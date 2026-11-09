@@ -22,10 +22,13 @@ and desktop app tested on hardware); parts of the hardware test checklist
 | EC CPU limits PL1 / PL2 / PL4 | 45 / 56 / 90 W | 90 / 130 / 200 W |
 | CPU, 1 thread | – | 4.94 GHz |
 | CPU, 8 threads (one per P-core) | – | 4.41 GHz @ 130 W |
-| CPU, all 24 threads sustained | ~2.45 GHz @ ~45–56 W | P 3.78 / E 3.03 GHz, 90 W |
+| CPU, all 24 threads, first ~50 s | – | P 4.0–4.6 / E 3.3–3.7 GHz, 130 W |
+| CPU, all 24 threads sustained | ~2.45 GHz @ ~45–56 W | P 3.5–3.78 / E 2.8–3.03 GHz, 90 W |
 | GPU power limit | 80–83 W | 115 W |
+| CPU + GPU at full load, sustained | – | CPU 70 W + GPU limit 105 W (GPU priority) |
 
-Raw logs are in [`logs/`](logs/).
+Raw logs are in [`logs/`](logs/); `tools/stress-test.sh` runs the CPU, GPU and combined
+load test (as a normal user, with omenctld in charge). Clock ranges depend on the load.
 
 ## Features
 
@@ -42,7 +45,9 @@ Raw logs are in [`logs/`](logs/).
   recommends is allowed and flagged.
 - Power readout: CPU and GPU power with a 90 s chart, adapter rating (from the BIOS),
   battery charge, draw, time left, health and cycles, USB-C power input.
-- Desktop app (OMEN Control) with Auto / Light / Dark themes; command line tool
+- Desktop app (OMEN Control) with Auto / Light / Dark themes, its own window frame
+  (rounded corners, GNOME-style buttons) and text that follows the desktop text scaling;
+  command line tool
   `omenctl status | mode ... | fan ... | defaults ...`.
 - Four safety layers; every failure ends with more cooling and less power.
 - One `.deb`: DKMS driver (rebuilt and MOK-signed for new kernels), service, tools,

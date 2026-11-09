@@ -189,6 +189,10 @@ Start **OMEN Control** from the application menu, or run `omenctl-gui`.
 - **Auto / Light / Dark** (top right): follow the desktop theme or force light or dark. The
   choice is saved in `~/.config/omenctl/gui.toml`.
 - Hover the (i) icons for explanations.
+- **Window**: the app draws its own frame (rounded corners, window buttons in the order set
+  by the desktop's `button-layout`). Drag the top bar to move, double-click it to maximize,
+  drag the edges to resize. Text follows the desktop text scaling (GNOME "Large text",
+  `text-scaling-factor`) and grows with a larger window.
 
 Options: `--theme light|dark|system` (for this run only; otherwise the saved choice), `--socket PATH`.
 
