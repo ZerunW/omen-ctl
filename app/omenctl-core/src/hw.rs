@@ -19,6 +19,8 @@ pub struct Sensors {
     pub ac_online: Option<bool>,
     /// Laptop battery charge (%).
     pub battery_percent: Option<u8>,
+    /// Busy share (0..1) of the busiest logical CPU since the previous reading.
+    pub cpu_busy_max: Option<f32>,
 }
 
 pub trait Hw {
@@ -43,11 +45,13 @@ pub trait Hw {
 pub struct SysfsHw {
     root: PathBuf,
     gpu: Option<Box<dyn FnMut() -> Option<f32> + Send>>,
+    /// Per-CPU (busy, total) jiffies from the previous /proc/stat reading.
+    prev_stat: Vec<(u64, u64)>,
 }
 
 impl SysfsHw {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        SysfsHw { root: root.into(), gpu: None }
+        SysfsHw { root: root.into(), gpu: None, prev_stat: Vec::new() }
     }
 
     /// Install a GPU temperature reader (e.g. NVML). It is only called while the
@@ -76,6 +80,22 @@ impl SysfsHw {
         v.into_iter().find(|h| read_trim(&h.join("name")).ok().as_deref() == Some("coretemp"))
     }
 
+    /// Busy share of the busiest CPU since the last call, from /proc/stat.
+    fn busiest_cpu(&mut self) -> Option<f32> {
+        let text = fs::read_to_string(self.p("proc/stat")).ok()?;
+        let now = parse_proc_stat(&text);
+        let r = (self.prev_stat.len() == now.len())
+            .then(|| {
+                now.iter()
+                    .zip(&self.prev_stat)
+                    .filter_map(|(&(b, t), &(pb, pt))| (t > pt).then(|| b.saturating_sub(pb) as f32 / (t - pt) as f32))
+                    .fold(None, |m: Option<f32>, v| Some(m.map_or(v, |m| m.max(v))))
+            })
+            .flatten();
+        self.prev_stat = now;
+        r
+    }
+
     fn gpu_active(&self) -> bool {
         read_trim(&self.p("sys/bus/pci/devices/0000:01:00.0/power/runtime_status"))
             .map(|s| s == "active")
@@ -87,6 +107,19 @@ fn first_dir(dir: &Path) -> io::Result<PathBuf> {
     let mut v: Vec<_> = fs::read_dir(dir)?.flatten().map(|e| e.path()).collect();
     v.sort();
     v.into_iter().next().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("nothing in {}", dir.display())))
+}
+
+/// (busy, total) jiffies of each "cpuN" line; idle and iowait count as not busy.
+pub fn parse_proc_stat(text: &str) -> Vec<(u64, u64)> {
+    text.lines()
+        .filter(|l| l.starts_with("cpu") && l.as_bytes().get(3).is_some_and(u8::is_ascii_digit))
+        .map(|l| {
+            let v: Vec<u64> = l.split_whitespace().skip(1).take(8).filter_map(|x| x.parse().ok()).collect();
+            let total: u64 = v.iter().sum();
+            let idle = v.get(3).copied().unwrap_or(0) + v.get(4).copied().unwrap_or(0);
+            (total - idle, total)
+        })
+        .collect()
 }
 
 pub fn read_trim(p: &Path) -> io::Result<String> {
@@ -113,7 +146,8 @@ impl Hw for SysfsHw {
         }
         let ac_online = read_trim(&self.p("sys/class/power_supply/ADP1/online")).ok().map(|s| s == "1");
         let battery_percent = crate::power::battery_percent(&self.root);
-        Sensors { cpu_temp, gpu_temp, fan_rpm, ac_online, battery_percent }
+        let cpu_busy_max = self.busiest_cpu();
+        Sensors { cpu_temp, gpu_temp, fan_rpm, ac_online, battery_percent, cpu_busy_max }
     }
 
     fn platform_profile(&self) -> io::Result<String> {
@@ -187,6 +221,21 @@ pub fn read_cpu_energy_uj(root: &Path) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proc_stat_busy() {
+        let a = "cpu  10 0 10 80 0 0 0 0 0 0\ncpu0 5 0 5 40 0 0 0 0 0 0\ncpu1 5 0 5 40 0 0 0 0 0 0\nintr 1\n";
+        assert_eq!(parse_proc_stat(a), vec![(10, 50), (10, 50)]);
+        let d = std::env::temp_dir().join(format!("omenctl-stat-{}-{}", std::process::id(), rand_suffix()));
+        fs::create_dir_all(d.join("proc")).unwrap();
+        fs::write(d.join("proc/stat"), a).unwrap();
+        let mut hw = SysfsHw::new(&d);
+        assert_eq!(hw.busiest_cpu(), None, "first reading has nothing to compare with");
+        // cpu0: 90 of 100 new jiffies busy, cpu1: 10 of 100
+        fs::write(d.join("proc/stat"), "cpu0 50 0 50 50 0 0 0 0\ncpu1 10 0 5 130 0 0 0 0\n").unwrap();
+        assert!((hw.busiest_cpu().unwrap() - 0.9).abs() < 1e-6);
+        fs::remove_dir_all(d).ok();
+    }
 
     fn tree() -> PathBuf {
         let d = std::env::temp_dir().join(format!("omenctl-hw-{}-{}", std::process::id(), rand_suffix()));

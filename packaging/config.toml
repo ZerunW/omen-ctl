@@ -65,10 +65,14 @@ rpm_fail_after_s = 10
 
 [cpu]
 # CPU energy/performance preference (intel_pstate EPP) while in Unleashed:
-# keep, default, performance, balance_performance, balance_power or power.
-# The 90/130 W power limits are the same either way; this only decides how
-# eagerly the cores boost at light load. "performance" makes an idle desktop
-# draw about 45 W and keeps the fans up; under full load both run the same.
+# auto, keep, default, performance, balance_performance, balance_power or power.
+# On 8D3F "balance_performance" holds the cores near 3.8 GHz (single core and
+# all cores); "performance" reaches 4.85 GHz single core and 4.6 GHz all cores
+# but the idle CPU draws about 31 W instead of 16 W.
+# auto = performance while any CPU is busy for at least auto_busy_percent of a
+# second, balance_performance after auto_idle_s seconds without such load.
 # keep = leave it to power-profiles-daemon (it sets "performance").
-unleashed_epp = "balance_performance"
+unleashed_epp = "auto"
+auto_busy_percent = 50
+auto_idle_s = 10
 

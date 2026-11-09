@@ -64,7 +64,7 @@ cd app && cargo test
 ## 3. Install
 
 ```bash
-sudo apt install ./omenctl_0.2.6_amd64.deb  # or ./packaging/out/... if you built it
+sudo apt install ./omenctl_0.2.7_amd64.deb  # or ./packaging/out/... if you built it
 sudo usermod -aG omenctl $USER              # then log out and in again
 sudo reboot                                 # loads the patched driver
 ```
@@ -100,10 +100,16 @@ If the patched driver is not loaded, the service is skipped (not failed) and log
 | Balanced | `balanced` | firmware default | default | your choice |
 | Unleashed | `performance` | PL1 90 W / PL2 130 W / PL4 200 W | power limit 115 W | software only |
 
-In Unleashed the CPU energy preference (EPP) is kept at `balance_performance`, so an idle
-desktop does not run the cores at full boost (power-profiles-daemon would set
-`performance`, about 45 W at idle). The power limits are the same, and under full load the
-CPU runs just as fast. Set `[cpu] unleashed_epp` to change it.
+In Unleashed the CPU energy preference (EPP) is switched automatically: `performance`
+while any CPU is busy (at least 50 % of a second), `balance_performance` after 10 s
+without such load. Measured on 8D3F:
+
+| EPP | single core | all cores (130 W / 90 W) | idle CPU power |
+|---|---|---|---|
+| `balance_performance` | 3.8 GHz | 3.8 GHz, does not reach the power limit | about 16 W |
+| `performance` | 4.85 GHz | P 4.6 / E 3.7 GHz, then P 4.2 / E 3.4 GHz | about 31 W |
+
+Set `[cpu] unleashed_epp` to a fixed value to turn the switching off.
 
 Unleashed only holds while the fans are software controlled: the firmware keeps the
 90/130 W state only inside the window the driver refreshes in manual fan mode. That is
@@ -212,7 +218,8 @@ the service refuse to start (see `journalctl -u omenctld`).
 | `[rapl] <mode> = [PL1, PL2]` | not set | Optional intel_rapl limits per mode (W, PL2 at most 130) |
 | `[fan] average_s`, `hold_s`, `fall_per_s` | `5`, `15`, `0.5` | Curve temperature averaging (s), hold after a rise (s), fall rate (levels of 100 rpm per second) |
 | `[fan.cpu_curve]`, `[fan.gpu_curve]` | BIOS table | Written by the desktop app on Apply |
-| `[cpu] unleashed_epp` | `balance_performance` | CPU EPP while in Unleashed (`keep` = leave it to power-profiles-daemon) |
+| `[cpu] unleashed_epp` | `auto` | CPU EPP while in Unleashed (`auto` = by load, `keep` = leave it to power-profiles-daemon) |
+| `[cpu] auto_busy_percent`, `auto_idle_s` | `50`, `10` | `auto`: a CPU busy at least this share of a second switches to `performance`; back after this many idle seconds |
 | `[protect] fans_max_at` | `92` | Both fans to maximum at this temperature (°C) |
 | `[protect] drop_at`, `drop_after_s` | `95`, `10` | Leave Unleashed after this long at this temperature |
 | `[protect] restore_below`, `restore_after_s` | `80`, `30` | Return to the selected mode after cooling |
@@ -275,7 +282,7 @@ Emergency, without the package tools:
 
 ```bash
 sudo systemctl disable --now omenctld
-sudo dkms remove omenctl-hp-wmi/0.2.6 --all
+sudo dkms remove omenctl-hp-wmi/0.2.7 --all
 sudo reboot
 ```
 

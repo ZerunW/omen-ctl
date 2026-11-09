@@ -21,21 +21,26 @@ pub struct Config {
     pub cpu: CpuConfig,
 }
 
-/// EPP values accepted by intel_pstate, plus "keep" (don't touch).
-pub const EPP_VALUES: [&str; 6] = ["keep", "default", "performance", "balance_performance", "balance_power", "power"];
+/// EPP values accepted by intel_pstate, plus "keep" (don't touch) and "auto"
+/// (performance while a CPU is busy, balance_performance when idle).
+pub const EPP_VALUES: [&str; 7] = ["auto", "keep", "default", "performance", "balance_performance", "balance_power", "power"];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CpuConfig {
-    /// CPU energy/performance preference while in Unleashed. The power limits
-    /// stay 90/130 W; this only decides how eagerly the cores boost at light
-    /// load. "performance" makes an idle desktop draw ~45 W.
+    /// CPU energy/performance preference while in Unleashed. "auto" = performance
+    /// while any CPU is busy (full boost clocks), balance_performance when idle
+    /// (balance_performance alone holds the cores near 3.8 GHz on 8D3F).
     pub unleashed_epp: String,
+    /// auto: a CPU counts as busy at or above this share of one second (10..=100 %).
+    pub auto_busy_percent: u8,
+    /// auto: return to balance_performance after this many idle seconds (1..=120).
+    pub auto_idle_s: u32,
 }
 
 impl Default for CpuConfig {
     fn default() -> Self {
-        CpuConfig { unleashed_epp: "balance_performance".into() }
+        CpuConfig { unleashed_epp: "auto".into(), auto_busy_percent: 50, auto_idle_s: 10 }
     }
 }
 
@@ -277,6 +282,12 @@ impl Config {
         }
         if !EPP_VALUES.contains(&self.cpu.unleashed_epp.as_str()) {
             return Err(format!("cpu.unleashed_epp must be one of {}", EPP_VALUES.join(", ")));
+        }
+        if !(10..=100).contains(&self.cpu.auto_busy_percent) {
+            return Err("cpu.auto_busy_percent must be 10-100".into());
+        }
+        if !(1..=120).contains(&self.cpu.auto_idle_s) {
+            return Err("cpu.auto_idle_s must be 1-120".into());
         }
         if !(5..=50).contains(&self.modes.low_battery_percent) {
             return Err("modes.low_battery_percent must be 5-50".into());

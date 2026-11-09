@@ -2,8 +2,13 @@
 
 All notable changes. Versions are the `.deb` / workspace version.
 
-## Unreleased
+## 0.2.7 - 2026-11-08
 
+- Unleashed: CPU energy preference is now switched by load (`[cpu] unleashed_epp = "auto"`,
+  the new default). `balance_performance` held the cores near 3.8 GHz even under load;
+  now a busy CPU gets `performance` (4.85 GHz single core, 4.6 GHz all cores at 130 W)
+  and an idle one goes back to `balance_performance` after 10 s. New options
+  `auto_busy_percent`, `auto_idle_s`.
 - Desktop app: draws its own window frame with rounded corners and GNOME-style
   window buttons (order taken from the desktop's button layout) instead of the
   dark fallback title bar on Wayland; resize from the edges, drag and

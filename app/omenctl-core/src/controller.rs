@@ -42,6 +42,9 @@ pub struct Controller<H: Hw> {
     errors: Vec<String>,
     /// Informational log lines (mode switched by a rule, ...), drained by the daemon.
     events: Vec<String>,
+    /// EPP "auto": time of the last tick with a busy CPU.
+    cpu_busy_at: Option<f64>,
+    now: f64,
 }
 
 impl<H: Hw> Controller<H> {
@@ -70,6 +73,8 @@ impl<H: Hw> Controller<H> {
             temp_hist: std::collections::VecDeque::new(),
             errors: Vec::new(),
             events: Vec::new(),
+            cpu_busy_at: None,
+            now: 0.0,
         }
     }
 
@@ -193,6 +198,7 @@ impl<H: Hw> Controller<H> {
 
     /// Apply a mode in the safe order: fans manual (if needed) -> profile -> extras.
     fn apply_mode(&mut self, mode: Mode, now: f64) {
+        self.now = now;
         let s = self.last_sensors;
         if mode == Mode::Unleashed || self.manual_needed(&s) {
             let lv = self.desired_levels(&s, now);
@@ -220,14 +226,32 @@ impl<H: Hw> Controller<H> {
         self.enforce_epp();
     }
 
+    /// EPP wanted in Unleashed. "auto": performance while a CPU was busy within
+    /// the last auto_idle_s seconds, else balance_performance.
+    fn epp_wanted(&mut self) -> Option<String> {
+        let c = &self.cfg.cpu;
+        match c.unleashed_epp.as_str() {
+            "keep" => None,
+            "auto" => {
+                let busy = self.last_sensors.cpu_busy_max.is_some_and(|b| b * 100.0 >= c.auto_busy_percent as f32);
+                if busy {
+                    self.cpu_busy_at = Some(self.now);
+                }
+                let recent = self.cpu_busy_at.is_some_and(|t| self.now - t < c.auto_idle_s as f64);
+                Some(if recent { "performance" } else { "balance_performance" }.into())
+            }
+            v => Some(v.into()),
+        }
+    }
+
     /// In Unleashed, keep the configured CPU EPP. power-profiles-daemon writes
     /// "performance" when it follows the platform profile, so this is checked
     /// every tick and only written when it differs.
     fn enforce_epp(&mut self) {
-        if self.effective_mode != Mode::Unleashed || self.cfg.cpu.unleashed_epp == "keep" {
+        if self.effective_mode != Mode::Unleashed {
             return;
         }
-        let want = self.cfg.cpu.unleashed_epp.clone();
+        let Some(want) = self.epp_wanted() else { return };
         if self.hw.cpu_epp().ok().as_deref() != Some(want.as_str()) {
             let r = self.hw.set_cpu_epp(&want);
             self.note("cpu epp", r);
@@ -340,6 +364,7 @@ impl<H: Hw> Controller<H> {
 
     /// One control step. Returns the current status.
     pub fn tick(&mut self, now: f64) -> Status {
+        self.now = now;
         self.errors.clear();
         let s = self.hw.sensors();
         self.last_sensors = s;
@@ -575,6 +600,7 @@ mod tests {
                     fan_rpm: [Some(2600), Some(2400)],
                     ac_online: Some(true),
                     battery_percent: Some(80),
+                    cpu_busy_max: Some(0.02),
                 },
                 profile: "balanced".into(),
                 pwm_enable: 2,
@@ -939,6 +965,41 @@ mod tests {
         c.hw.epp = "balance_power".into();
         c.tick(5.0);
         assert_eq!(c.hw.epp, "balance_power");
+    }
+
+    #[test]
+    fn auto_epp_boosts_while_busy_and_relaxes_when_idle() {
+        let mut c = ctl(55.0, Mode::Unleashed, FanMode::Curve);
+        assert_eq!(c.cfg.cpu.unleashed_epp, "auto", "auto is the default");
+        c.tick(1.0);
+        assert_eq!(c.hw.epp, "balance_performance", "idle");
+        c.hw.s.cpu_busy_max = Some(0.95); // one core fully busy (single-threaded load)
+        c.tick(2.0);
+        assert_eq!(c.hw.epp, "performance");
+        c.hw.s.cpu_busy_max = Some(0.05);
+        for t in 3..=11 {
+            c.tick(t as f64);
+            assert_eq!(c.hw.epp, "performance", "held for auto_idle_s after the last busy second (t={t})");
+        }
+        c.tick(12.0);
+        assert_eq!(c.hw.epp, "balance_performance");
+        // a short spike re-arms the hold
+        c.hw.s.cpu_busy_max = Some(0.6);
+        c.tick(13.0);
+        assert_eq!(c.hw.epp, "performance");
+        // outside Unleashed the EPP is not touched
+        c.set_mode(Mode::Balanced, 14.0);
+        c.hw.epp = "balance_power".into();
+        c.tick(15.0);
+        assert_eq!(c.hw.epp, "balance_power");
+        // a fixed value ignores the load
+        let mut cfg = Config::default();
+        cfg.cpu.unleashed_epp = "balance_performance".into();
+        let mut c = Controller::new(Mock::new(55.0), cfg, Mode::Unleashed, FanMode::Curve);
+        c.start(0.0);
+        c.hw.s.cpu_busy_max = Some(1.0);
+        c.tick(1.0);
+        assert_eq!(c.hw.epp, "balance_performance");
     }
 
     #[test]

@@ -30,8 +30,8 @@ Raw logs are in [`logs/`](logs/).
 ## Features
 
 - Three modes: **Power Saver**, **Balanced**, **Unleashed** (CPU 90/130 W, GPU 115 W).
-  Unleashed keeps the CPU energy preference at `balance_performance`, so an idle desktop
-  stays at ~25 W instead of ~45 W while full load runs at the same limits.
+  Unleashed switches the CPU energy preference by load: full boost (4.85 GHz single core)
+  while the CPU is busy, `balance_performance` when idle (CPU ~16 W instead of ~31 W).
 - Default modes: at startup, when the adapter is plugged in, on battery, and when the
   battery runs low.
 - Fans: BIOS auto, per-fan curves (default: the BIOS fan table), manual speed, maximum.
