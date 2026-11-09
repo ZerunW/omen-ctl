@@ -47,6 +47,9 @@ fn print_status(s: &Status) {
     println!("GPU temperature   {}", s.gpu_temp.map_or("- (GPU asleep or unavailable)".into(), |t| format!("{t:.0} °C")));
     println!("CPU power         {}", opt(s.cpu_power_w.map(|w| format!("{w:.1}")), " W"));
     println!("GPU power         {}", opt(s.gpu_power_w.map(|w| format!("{w:.1}")), " W"));
+    if let Some(w) = s.gpu_priority_w {
+        println!("GPU priority      on: CPU sustained power limited to {w} W while the GPU is busy");
+    }
     println!("fan speed         CPU {} / GPU {}", opt(s.fan_rpm[0], " rpm"), opt(s.fan_rpm[1], " rpm"));
     println!("fan target        CPU {} / GPU {}", rpm(s.fan_target[0]), rpm(s.fan_target[1]));
     println!("fan recommended   CPU {} / GPU {}", rpm(s.fan_recommended[0]), rpm(s.fan_recommended[1]));

@@ -113,6 +113,7 @@ impl<H: Hw> Daemon<H> {
 
     fn tick(&mut self) -> Status {
         let now = self.now();
+        self.ctl.set_gpu_power(self.gpu.as_ref().and_then(|g| g.power_w()));
         let st = self.ctl.tick(now);
         for e in self.ctl.take_events() {
             eprintln!("{e}");

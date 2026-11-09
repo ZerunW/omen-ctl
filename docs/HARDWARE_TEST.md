@@ -37,11 +37,11 @@ Purpose: the code builds on the machine's Rust 1.97 and all tests pass.
 ```bash
 cd ~/omen-ctl/app && cargo test          # or cargo-1.97
 cd .. && packaging/build-deb.sh
-dpkg-deb -c packaging/out/omenctl_0.2.7_amd64.deb | less
+dpkg-deb -c packaging/out/omenctl_0.2.8_amd64.deb | less
 ```
 
 Expected: all tests `ok`; the .deb lists `usr/sbin/omenctld`, `usr/bin/omenctl`,
-`usr/bin/omenctl-gui`, `usr/src/omenctl-hp-wmi-0.2.7/`, the systemd units and docs.
+`usr/bin/omenctl-gui`, `usr/src/omenctl-hp-wmi-0.2.8/`, the systemd units and docs.
 
 Rollback: none needed (no system change).
 
@@ -50,7 +50,7 @@ Rollback: none needed (no system change).
 Purpose: maintainer scripts run cleanly; DKMS builds and signs the driver.
 
 ```bash
-sudo apt install ./packaging/out/omenctl_0.2.7_amd64.deb
+sudo apt install ./packaging/out/omenctl_0.2.8_amd64.deb
 dkms status
 modinfo /lib/modules/$(uname -r)/updates/dkms/hp-wmi.ko* | grep -E 'signer|srcversion|vermagic'
 systemctl is-enabled omenctld nvidia-powerd omenctl-nvidia-powerd nvidia-suspend nvidia-resume nvidia-hibernate
@@ -58,7 +58,7 @@ cat /var/lib/omenctl/rollback/units
 systemctl is-active omenctld
 ```
 
-Expected: `omenctl-hp-wmi/0.2.7 ... installed`; signer is the machine's MOK key;
+Expected: `omenctl-hp-wmi/0.2.8 ... installed`; signer is the machine's MOK key;
 `omenctld` enabled but **inactive**; one of the two powerd units enabled; the rollback file
 lists the units' state before installation.
 
@@ -78,7 +78,7 @@ cat /sys/devices/platform/hp-wmi/omenctl_kick # armed=0 tripped=0 ...
 Expected: path under `updates/dkms`; `omenctl_kick` exists. The fans may stop for about
 two minutes after loading (EC takes over), so do this while idle.
 
-Rollback: `sudo dkms remove omenctl-hp-wmi/0.2.7 --all && sudo rmmod hp_wmi && sudo modprobe hp_wmi`
+Rollback: `sudo dkms remove omenctl-hp-wmi/0.2.8 --all && sudo rmmod hp_wmi && sudo modprobe hp_wmi`
 (loads the stock module again).
 
 ## 4. Start the service in Balanced

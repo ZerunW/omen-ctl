@@ -2,6 +2,14 @@
 
 All notable changes. Versions are the `.deb` / workspace version.
 
+## 0.2.8 - 2026-11-08
+
+- GPU priority (Unleashed): while the GPU draws 50 W or more, the CPU sustained limit
+  (RAPL PL1) drops to 70 W so NVIDIA Dynamic Boost raises the GPU limit from 85 W to
+  105 W under combined load. Restored when the GPU is idle for 15 s, when leaving
+  Unleashed and when the service stops. `[cpu] gpu_priority_pl1` (0 = off).
+  `omenctl status` shows it while it is on.
+
 ## 0.2.7 - 2026-11-08
 
 - Unleashed: CPU energy preference is now switched by load (`[cpu] unleashed_epp = "auto"`,

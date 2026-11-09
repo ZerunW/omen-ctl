@@ -16,6 +16,12 @@ use crate::{FanMode, Mode};
 
 /// Grace period after a fan target change before rpm is checked (fans take ~10 s to ramp).
 const RPM_GRACE_S: f64 = 12.0;
+/// GPU priority: engage when the GPU draws at least this much for GPU_ENGAGE_S,
+/// release when it stays below GPU_IDLE_W for GPU_RELEASE_S.
+const GPU_BUSY_W: f32 = 50.0;
+const GPU_ENGAGE_S: f64 = 3.0;
+const GPU_IDLE_W: f32 = 30.0;
+const GPU_RELEASE_S: f64 = 15.0;
 
 pub struct Controller<H: Hw> {
     pub hw: H,
@@ -45,6 +51,12 @@ pub struct Controller<H: Hw> {
     /// EPP "auto": time of the last tick with a busy CPU.
     cpu_busy_at: Option<f64>,
     now: f64,
+    /// Latest GPU power (W), supplied by the daemon.
+    gpu_w: Option<f32>,
+    gpu_busy_since: Option<f64>,
+    gpu_idle_since: Option<f64>,
+    /// GPU priority active: the RAPL PL1/PL2 to restore when it ends.
+    gpu_priority: Option<(u32, u32)>,
 }
 
 impl<H: Hw> Controller<H> {
@@ -75,6 +87,10 @@ impl<H: Hw> Controller<H> {
             events: Vec::new(),
             cpu_busy_at: None,
             now: 0.0,
+            gpu_w: None,
+            gpu_busy_since: None,
+            gpu_idle_since: None,
+            gpu_priority: None,
         }
     }
 
@@ -221,9 +237,81 @@ impl<H: Hw> Controller<H> {
         if let Some((pl1, pl2)) = rapl {
             let r = self.hw.set_rapl(pl1, pl2);
             self.note("rapl", r);
+            if self.gpu_priority.is_some() {
+                self.gpu_priority = Some((pl1, pl2)); // the configured values are the ones to restore
+            }
         }
         self.effective_mode = mode;
         self.enforce_epp();
+        // GPU priority only applies in Unleashed; re-assert it (firmware may reset
+        // RAPL on resume) or end it when leaving Unleashed.
+        if let Some((_, pl2)) = self.gpu_priority {
+            if mode == Mode::Unleashed {
+                let pl1 = self.cfg.cpu.gpu_priority_pl1.min(pl2);
+                let r = self.hw.set_rapl(pl1, pl2);
+                self.note("rapl (GPU priority)", r);
+            } else {
+                self.end_gpu_priority("left Unleashed");
+            }
+        }
+    }
+
+    /// Daemon input: current GPU power draw (None = unknown or GPU asleep).
+    pub fn set_gpu_power(&mut self, w: Option<f32>) {
+        self.gpu_w = w;
+    }
+
+    /// GPU priority: while the GPU is busy in Unleashed, lower the CPU sustained
+    /// limit so Dynamic Boost moves budget to the GPU (measured on 8D3F: CPU
+    /// 90 W / GPU limit 85 W becomes CPU 70 W / GPU limit 105 W). Only ever
+    /// lowers power; the previous limits are restored afterwards.
+    fn update_gpu_priority(&mut self, now: f64) {
+        let want = self.cfg.cpu.gpu_priority_pl1;
+        let w = self.gpu_w.unwrap_or(0.0);
+        let unleashed = self.effective_mode == Mode::Unleashed;
+        if self.gpu_priority.is_some() {
+            if want == 0 || !unleashed {
+                self.end_gpu_priority("off");
+            } else if w < GPU_IDLE_W {
+                let since = *self.gpu_idle_since.get_or_insert(now);
+                if now - since >= GPU_RELEASE_S {
+                    self.end_gpu_priority("GPU idle");
+                }
+            } else {
+                self.gpu_idle_since = None;
+            }
+            return;
+        }
+        if want == 0 || !unleashed || w < GPU_BUSY_W {
+            self.gpu_busy_since = None;
+            return;
+        }
+        let since = *self.gpu_busy_since.get_or_insert(now);
+        if now - since < GPU_ENGAGE_S {
+            return;
+        }
+        match self.hw.rapl() {
+            Ok((pl1, pl2)) if pl1 > want => {
+                let r = self.hw.set_rapl(want, pl2);
+                if self.note("rapl (GPU priority)", r) {
+                    self.gpu_priority = Some((pl1, pl2));
+                    self.gpu_idle_since = None;
+                    self.events.push(format!("GPU busy ({w:.0} W): CPU sustained power {pl1} -> {want} W"));
+                }
+            }
+            Ok(_) => self.gpu_busy_since = None, // already at or below the target
+            Err(e) => self.errors.push(format!("rapl: {e}")),
+        }
+    }
+
+    fn end_gpu_priority(&mut self, why: &str) {
+        if let Some((pl1, pl2)) = self.gpu_priority.take() {
+            let r = self.hw.set_rapl(pl1, pl2);
+            self.note("rapl (restore)", r);
+            self.events.push(format!("GPU priority ended ({why}): CPU sustained power back to {pl1} W"));
+        }
+        self.gpu_busy_since = None;
+        self.gpu_idle_since = None;
     }
 
     /// EPP wanted in Unleashed. "auto": performance while a CPU was busy within
@@ -454,6 +542,7 @@ impl<H: Hw> Controller<H> {
         }
 
         self.enforce_epp();
+        self.update_gpu_priority(now);
 
         // 4. Fans.
         let mut fans_ok = true;
@@ -555,12 +644,14 @@ impl<H: Hw> Controller<H> {
             ac_online: s.ac_online,
             power: Default::default(),
             alerts,
+            gpu_priority_w: self.gpu_priority.map(|_| self.cfg.cpu.gpu_priority_pl1),
         }
     }
 
     /// Safe exit: max fans if hot, balanced profile, then hand fans back to BIOS
     /// (the patched driver holds the current speed until the EC takes over).
     pub fn shutdown(&mut self) {
+        self.end_gpu_priority("service stopping");
         let s = self.hw.sensors();
         if Self::temp(&s).map_or(true, |t| t >= self.cfg.protect.restore_below) {
             let _ = self.hw.set_pwm_enable(PWM_MANUAL);
@@ -589,6 +680,7 @@ mod tests {
         c75: u32,
         fail_pwm: bool,
         epp: String,
+        rapl: (u32, u32),
     }
 
     impl Mock {
@@ -604,6 +696,7 @@ mod tests {
                 },
                 profile: "balanced".into(),
                 pwm_enable: 2,
+                rapl: (130, 130),
                 ..Default::default()
             }
         }
@@ -656,7 +749,11 @@ mod tests {
         }
         fn set_rapl(&mut self, a: u32, b: u32) -> io::Result<()> {
             self.log.push(format!("rapl={a}/{b}"));
+            self.rapl = (a, b);
             Ok(())
+        }
+        fn rapl(&self) -> io::Result<(u32, u32)> {
+            Ok(self.rapl)
         }
         fn cpu_epp(&self) -> io::Result<String> {
             Ok(self.epp.clone())
@@ -1000,6 +1097,70 @@ mod tests {
         c.hw.s.cpu_busy_max = Some(1.0);
         c.tick(1.0);
         assert_eq!(c.hw.epp, "balance_performance");
+    }
+
+    #[test]
+    fn gpu_priority_lowers_cpu_limit_while_gpu_is_busy() {
+        let mut c = ctl(60.0, Mode::Unleashed, FanMode::Curve);
+        c.set_gpu_power(Some(85.0));
+        c.tick(1.0);
+        c.tick(3.0);
+        assert_eq!(c.hw.rapl, (130, 130), "not before GPU_ENGAGE_S");
+        c.tick(4.0);
+        assert_eq!(c.hw.rapl, (70, 130));
+        assert_eq!(c.status().gpu_priority_w, Some(70));
+        // short GPU dips do not end it
+        c.set_gpu_power(Some(20.0));
+        for t in 5..=10 {
+            c.tick(t as f64);
+        }
+        c.set_gpu_power(Some(90.0));
+        c.tick(11.0);
+        assert_eq!(c.hw.rapl, (70, 130));
+        // resume from sleep: firmware reset RAPL, it is re-asserted
+        c.hw.rapl = (130, 130);
+        c.reapply(12.0);
+        assert_eq!(c.hw.rapl, (70, 130));
+        // GPU idle for GPU_RELEASE_S: restored
+        c.set_gpu_power(Some(11.0));
+        for t in 13..=27 {
+            c.tick(t as f64);
+            assert_eq!(c.hw.rapl, (70, 130), "t={t}");
+        }
+        c.tick(28.0);
+        assert_eq!(c.hw.rapl, (130, 130));
+        assert_eq!(c.status().gpu_priority_w, None);
+        // leaving Unleashed ends it at once
+        c.set_gpu_power(Some(90.0));
+        for t in 29..=32 {
+            c.tick(t as f64);
+        }
+        assert_eq!(c.hw.rapl, (70, 130));
+        c.set_mode(Mode::Balanced, 33.0);
+        assert_eq!(c.hw.rapl, (130, 130));
+        c.tick(40.0);
+        assert_eq!(c.hw.rapl, (130, 130), "never in Balanced");
+        // stopping the service restores the limits
+        c.set_mode(Mode::Unleashed, 41.0);
+        for t in 42..=46 {
+            c.tick(t as f64);
+        }
+        assert_eq!(c.hw.rapl, (70, 130));
+        c.shutdown();
+        assert_eq!(c.hw.rapl, (130, 130));
+    }
+
+    #[test]
+    fn gpu_priority_can_be_turned_off() {
+        let mut cfg = Config::default();
+        cfg.cpu.gpu_priority_pl1 = 0;
+        let mut c = Controller::new(Mock::new(60.0), cfg, Mode::Unleashed, FanMode::Curve);
+        c.start(0.0);
+        c.set_gpu_power(Some(100.0));
+        for t in 1..=10 {
+            c.tick(t as f64);
+        }
+        assert_eq!(c.hw.rapl, (130, 130));
     }
 
     #[test]

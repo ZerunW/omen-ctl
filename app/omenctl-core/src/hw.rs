@@ -35,6 +35,8 @@ pub trait Hw {
     fn kick(&mut self) -> io::Result<()>;
     fn set_concurrent_75w(&mut self) -> io::Result<()>;
     fn set_rapl(&mut self, pl1_w: u32, pl2_w: u32) -> io::Result<()>;
+    /// Current intel_rapl package PL1/PL2 (W).
+    fn rapl(&self) -> io::Result<(u32, u32)>;
     /// CPU energy/performance preference (intel_pstate EPP) of cpu0.
     fn cpu_epp(&self) -> io::Result<String>;
     /// Set the EPP on every CPU.
@@ -186,6 +188,15 @@ impl Hw for SysfsHw {
         let z = self.p("sys/class/powercap/intel-rapl:0");
         write(&z.join("constraint_0_power_limit_uw"), &(pl1_w as u64 * 1_000_000).to_string())?;
         write(&z.join("constraint_1_power_limit_uw"), &(pl2_w as u64 * 1_000_000).to_string())
+    }
+
+    fn rapl(&self) -> io::Result<(u32, u32)> {
+        let z = self.p("sys/class/powercap/intel-rapl:0");
+        let w = |f: &str| -> io::Result<u32> {
+            let uw: u64 = read_trim(&z.join(f))?.parse().map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{f}: {e}")))?;
+            Ok((uw / 1_000_000) as u32)
+        };
+        Ok((w("constraint_0_power_limit_uw")?, w("constraint_1_power_limit_uw")?))
     }
 
     fn cpu_epp(&self) -> io::Result<String> {

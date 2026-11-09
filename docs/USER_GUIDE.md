@@ -64,7 +64,7 @@ cd app && cargo test
 ## 3. Install
 
 ```bash
-sudo apt install ./omenctl_0.2.7_amd64.deb  # or ./packaging/out/... if you built it
+sudo apt install ./omenctl_0.2.8_amd64.deb  # or ./packaging/out/... if you built it
 sudo usermod -aG omenctl $USER              # then log out and in again
 sudo reboot                                 # loads the patched driver
 ```
@@ -110,6 +110,14 @@ without such load. Measured on 8D3F:
 | `performance` | 4.85 GHz | P 4.6 / E 3.7 GHz, then P 4.2 / E 3.4 GHz | about 31 W |
 
 Set `[cpu] unleashed_epp` to a fixed value to turn the switching off.
+
+CPU and GPU share one power budget of about 175 W in Unleashed; NVIDIA Dynamic Boost
+gives the GPU what the CPU leaves. With both at full load the CPU takes its 90 W and the
+GPU is held at 85 W. **GPU priority** lowers the CPU sustained limit (RAPL PL1) to 70 W
+while the GPU draws 50 W or more (for 3 s); measured on 8D3F the GPU limit then rises to
+105 W. The previous limit returns after the GPU stays below 30 W for 15 s, when leaving
+Unleashed and when the service stops. `omenctl status` shows "GPU priority" while it is
+on. Set `[cpu] gpu_priority_pl1` to another value (35-90) or 0 to turn it off.
 
 Unleashed only holds while the fans are software controlled: the firmware keeps the
 90/130 W state only inside the window the driver refreshes in manual fan mode. That is
@@ -219,6 +227,7 @@ the service refuse to start (see `journalctl -u omenctld`).
 | `[fan] average_s`, `hold_s`, `fall_per_s` | `5`, `15`, `0.5` | Curve temperature averaging (s), hold after a rise (s), fall rate (levels of 100 rpm per second) |
 | `[fan.cpu_curve]`, `[fan.gpu_curve]` | BIOS table | Written by the desktop app on Apply |
 | `[cpu] unleashed_epp` | `auto` | CPU EPP while in Unleashed (`auto` = by load, `keep` = leave it to power-profiles-daemon) |
+| `[cpu] gpu_priority_pl1` | `70` | Unleashed: CPU sustained limit (W) while the GPU is busy, 0 = off |
 | `[cpu] auto_busy_percent`, `auto_idle_s` | `50`, `10` | `auto`: a CPU busy at least this share of a second switches to `performance`; back after this many idle seconds |
 | `[protect] fans_max_at` | `92` | Both fans to maximum at this temperature (°C) |
 | `[protect] drop_at`, `drop_after_s` | `95`, `10` | Leave Unleashed after this long at this temperature |
@@ -282,7 +291,7 @@ Emergency, without the package tools:
 
 ```bash
 sudo systemctl disable --now omenctld
-sudo dkms remove omenctl-hp-wmi/0.2.7 --all
+sudo dkms remove omenctl-hp-wmi/0.2.8 --all
 sudo reboot
 ```
 

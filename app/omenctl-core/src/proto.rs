@@ -53,6 +53,9 @@ pub struct Status {
     pub power: PowerInfo,
     /// Active protection / fault messages (empty when all is well).
     pub alerts: Vec<String>,
+    /// GPU priority active: CPU sustained power (W) lowered while the GPU is busy.
+    #[serde(default)]
+    pub gpu_priority_w: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

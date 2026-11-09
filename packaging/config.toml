@@ -75,4 +75,10 @@ rpm_fail_after_s = 10
 unleashed_epp = "auto"
 auto_busy_percent = 50
 auto_idle_s = 10
+# GPU priority (Unleashed): CPU and GPU share one power budget (about 175 W).
+# While the GPU draws 50 W or more (for 3 s), the CPU sustained limit (RAPL PL1)
+# is lowered to this many watts, and NVIDIA Dynamic Boost gives the GPU the
+# rest: CPU 90 W / GPU limit 85 W becomes CPU 70 W / GPU limit 105 W. Restored
+# after the GPU stays below 30 W for 15 s. 0 = off, else 35-90.
+gpu_priority_pl1 = 70
 

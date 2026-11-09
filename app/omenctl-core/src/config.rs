@@ -36,11 +36,15 @@ pub struct CpuConfig {
     pub auto_busy_percent: u8,
     /// auto: return to balance_performance after this many idle seconds (1..=120).
     pub auto_idle_s: u32,
+    /// GPU priority: in Unleashed, while the GPU draws a lot of power, lower the
+    /// CPU sustained limit (RAPL PL1) to this many watts so NVIDIA Dynamic Boost
+    /// gives the GPU more of the shared budget. 0 = off, else 35..=90.
+    pub gpu_priority_pl1: u32,
 }
 
 impl Default for CpuConfig {
     fn default() -> Self {
-        CpuConfig { unleashed_epp: "auto".into(), auto_busy_percent: 50, auto_idle_s: 10 }
+        CpuConfig { unleashed_epp: "auto".into(), auto_busy_percent: 50, auto_idle_s: 10, gpu_priority_pl1: 70 }
     }
 }
 
@@ -285,6 +289,9 @@ impl Config {
         }
         if !(10..=100).contains(&self.cpu.auto_busy_percent) {
             return Err("cpu.auto_busy_percent must be 10-100".into());
+        }
+        if self.cpu.gpu_priority_pl1 != 0 && !(35..=90).contains(&self.cpu.gpu_priority_pl1) {
+            return Err("cpu.gpu_priority_pl1 must be 0 (off) or 35-90".into());
         }
         if !(1..=120).contains(&self.cpu.auto_idle_s) {
             return Err("cpu.auto_idle_s must be 1-120".into());
