@@ -64,9 +64,6 @@ omenctl mode unleashed
 omenctl-gui                                  # or "OMEN Control" in the app menu
 ```
 
-Members of the `omenctl` group can change power limits and fan speeds, so add only
-users you trust with the hardware.
-
 Uninstall: `sudo apt remove omenctl` removes the programs and the DKMS driver, gives the
 fans back to the BIOS and restores the NVIDIA service settings; reboot to load the stock
 driver again. `sudo apt purge omenctl` also deletes `/etc/omenctl`, `/var/lib/omenctl` and

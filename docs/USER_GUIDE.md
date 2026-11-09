@@ -75,7 +75,7 @@ also deletes config, state and the group; see
 
 | Step | Detail |
 |---|---|
-| Group `omenctl` | Members may use the socket, which means changing power limits and fan speeds (also below the recommended curve). Add only trusted users. Created only if missing. |
+| Group `omenctl` | Members may use the socket (modes, fan control). Created only if missing. |
 | Driver | DKMS builds `hp-wmi` into `/lib/modules/<kernel>/updates/dkms/`, which is preferred over the stock module. Rebuilt for every new kernel. |
 | Service | `omenctld.service` is **enabled for the next boot but not started** on a first install (the stock driver is still loaded). On an upgrade it is started again right away when it was running and the driver did not change; if the driver changed, the installer asks for a reboot. |
 | NVIDIA | Enables `nvidia-powerd` (or the bundled `omenctl-nvidia-powerd.service` if the driver has no unit) and `nvidia-suspend/resume/hibernate`. The previous state of these units is saved in `/var/lib/omenctl/rollback/units`. |

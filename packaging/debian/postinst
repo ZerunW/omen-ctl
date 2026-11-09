@@ -114,9 +114,7 @@ MSG
 
 omenctl is installed. Next steps:
   1. Add yourself to the omenctl group:  sudo usermod -aG omenctl $USER
-     (takes effect after logging in again). Members can change power limits
-     and fan speeds (including speeds below the recommended curve), so add
-     only people you trust with the hardware.
+     (takes effect after logging in again)
   2. Reboot so the patched hp-wmi driver is loaded
      (or reload it by hand, see /usr/share/doc/omenctl/HARDWARE_TEST.md).
   3. The service starts automatically at the next boot; to start it now:

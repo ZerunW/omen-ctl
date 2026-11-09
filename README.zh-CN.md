@@ -62,8 +62,6 @@ omenctl mode unleashed
 omenctl-gui                                  # 或者在应用菜单里打开 "OMEN Control"
 ```
 
-`omenctl` 组的成员可以修改功率上限和风扇转速，所以只把你信任的用户加进这个组。
-
 卸载：`sudo apt remove omenctl` 移除程序和 DKMS 驱动，把风扇交还 BIOS，并恢复 NVIDIA 相关服务的设置；
 重启后加载原版驱动。`sudo apt purge omenctl` 还会删除 `/etc/omenctl`、`/var/lib/omenctl`，
 以及 `omenctl` 组（如果这个组是安装包创建的）。完整说明、配置和排错见 [docs/USER_GUIDE.md](docs/USER_GUIDE.md)（英文），
