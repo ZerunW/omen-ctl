@@ -9,10 +9,11 @@ On Linux this laptop's embedded controller (EC) keeps the CPU at PL1 45 W / PL2 
 commands that OMEN Gaming Hub sends on Windows. omenctl reproduces those commands through
 the kernel's `hp-wmi` driver and adds the fan control the firmware expects in that state.
 
-**Status: beta.** The kernel driver changes are tested on hardware. The service, command
-line tool and desktop app are complete and tested against a simulated sysfs tree; the
-hardware test checklist ([docs/HARDWARE_TEST.md](docs/HARDWARE_TEST.md)) is in progress.
-Use at your own risk.
+**Status: beta.** Runs daily on the author's machine (driver, service, command line tool
+and desktop app tested on hardware); parts of the hardware test checklist
+([docs/HARDWARE_TEST.md](docs/HARDWARE_TEST.md)) are still open. Use at your own risk.
+
+![OMEN Control, dark theme](docs/screenshots/dark.png)
 
 ## Measured results (Ubuntu 24.04, HWE kernel 7.0, BIOS F.14)
 
@@ -29,28 +30,50 @@ Raw logs are in [`logs/`](logs/).
 ## Features
 
 - Three modes: **Power Saver**, **Balanced**, **Unleashed** (CPU 90/130 W, GPU 115 W).
+  Unleashed keeps the CPU energy preference at `balance_performance`, so an idle desktop
+  stays at ~25 W instead of ~45 W while full load runs at the same limits.
+- Default modes: at startup, when the adapter is plugged in, on battery, and when the
+  battery runs low.
 - Fans: BIOS auto, per-fan curves (default: the BIOS fan table), manual speed, maximum.
-  A manual speed below what the curve recommends is allowed and flagged.
-- Desktop app with live readings and 60 s history, a fan curve editor, light and dark themes.
-- Command line tool: `omenctl status | mode ... | fan ...`.
+  Curves use a 5 s temperature average and hold the speed 15 s before slowing down, so
+  short load spikes don't make the fans pump. A manual speed below what the curve
+  recommends is allowed and flagged.
+- Power readout: CPU and GPU power with a 90 s chart, adapter rating (from the BIOS),
+  battery charge, draw, time left, health and cycles, USB-C power input.
+- Desktop app (OMEN Control) with Auto / Light / Dark themes; command line tool
+  `omenctl status | mode ... | fan ... | defaults ...`.
 - Four safety layers; every failure ends with more cooling and less power.
 - One `.deb`: DKMS driver (rebuilt and MOK-signed for new kernels), service, tools,
   `nvidia-powerd`. `apt remove` restores the original system.
 
-## Quick start
+## Install
+
+Requirements: HP OMEN 16-am0xxx (board `8D3F`, check `cat /sys/class/dmi/id/board_name`),
+Ubuntu 24.04 with the HWE 7.0 kernel, Secure Boot either off or with a MOK key enrolled
+for DKMS (Ubuntu sets this up when you install third-party drivers).
+
+Download `omenctl_<version>_amd64.deb` from the
+[latest release](https://github.com/ZerunW/omen-ctl/releases/latest), then
 
 ```bash
-git clone https://github.com/ZerunW/omen-ctl && cd omen-ctl
-packaging/build-deb.sh                       # needs Rust 1.97+, dpkg-dev
-sudo apt install ./packaging/out/omenctl_0.1.0_amd64.deb
+sudo apt install ./omenctl_*_amd64.deb
 sudo usermod -aG omenctl $USER               # log out and in
 sudo reboot
 omenctl status
 omenctl mode unleashed
-omenctl-gui
+omenctl-gui                                  # or "OMEN Control" in the app menu
 ```
 
-Full instructions: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+To remove everything: `sudo apt remove omenctl`. Full instructions, configuration and
+troubleshooting: [docs/USER_GUIDE.md](docs/USER_GUIDE.md). Changes per version:
+[CHANGELOG.md](CHANGELOG.md).
+
+Bluetooth keyboard can't wake the laptop from suspend? That is a BlueZ problem, not an
+OMEN one; see the companion project [bt-le-wake](https://github.com/ZerunW/bt-le-wake).
+
+| Light theme, on battery | Default modes |
+|---|---|
+| ![light](docs/screenshots/light-battery.png) | ![defaults](docs/screenshots/default-modes.png) |
 
 ## How it works (8D3F specifics)
 
@@ -78,7 +101,7 @@ omenctl-gui (user)     omenctl (user)
                  |
         omenctld (root, systemd Type=notify, watchdog)
                  |   standard sysfs only
-   platform_profile · hp-wmi hwmon pwm · omenctl_kick · omenctl_concurrent_tdp
+   platform_profile · hp-wmi hwmon pwm · omenctl_kick · omenctl_concurrent_tdp · omenctl_adapter_w
                  |
         hp-wmi (patched, DKMS)  ->  BIOS WMI  ->  EC
 ```
@@ -91,8 +114,8 @@ omenctl-gui (user)     omenctl (user)
 | `app/omenctld` | service |
 | `app/omenctl-cli` | command line tool `omenctl` |
 | `app/omenctl-gui` | desktop app (egui) |
-| `packaging/` | `.deb` build script, systemd units, DKMS config, maintainer and safety scripts |
-| `docs/` | user guide and hardware test checklist |
+| `packaging/` | `.deb` build script, systemd units, DKMS config, maintainer and safety scripts, app icon |
+| `docs/` | user guide, hardware test checklist, screenshots |
 | `hpwmi-upstream/` | upstream `hp-wmi.c` (commit `e931e54edb0f`) + `backport.patch` |
 | `tools/` | read-only EC snapshot script and hardware test scripts |
 | `logs/` | test logs |
@@ -107,7 +130,9 @@ On top of mainline `hp-wmi` (which already supports 8D3F since v7.4-rc1):
 2. `omenctl_concurrent_tdp` (write-only, accepts only `75`, 8D3F only);
 3. kernel fan watchdog: `omenctl_kick`; if userspace stops kicking for 15 s while fans are
    manual, the driver forces both fans to the top table level;
-4. smooth fan handover on 8D3F: returning fans to BIOS writes the current speed instead of 0.
+4. smooth fan handover on 8D3F: returning fans to BIOS writes the current speed instead of 0;
+5. `omenctl_adapter_w` (read-only, 8D3F only): rated adapter power from the read-only BIOS
+   query 0x0F, which only reads EC fields (`WMID.GSAS` in the DSDT).
 
 ## Safety design
 
@@ -120,7 +145,11 @@ On top of mainline `hp-wmi` (which already supports 8D3F since v7.4-rc1):
 
 ```bash
 cd app && cargo test      # unit tests + an end-to-end test of the service on a fake sysfs tree
+packaging/build-deb.sh    # -> packaging/out/omenctl_<version>_amd64.deb (needs Rust, dpkg-dev)
 ```
+
+GitHub Actions runs the tests on every push and builds the `.deb`; pushing a `v*` tag
+publishes a release with the package attached.
 
 ## License
 

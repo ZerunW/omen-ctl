@@ -17,7 +17,7 @@ sysfs files. It never writes to the embedded controller (EC) directly.
 ## Contents
 
 1. [Requirements](#1-requirements)
-2. [Build the package](#2-build-the-package)
+2. [Get the package](#2-get-the-package)
 3. [Install](#3-install)
 4. [Modes](#4-modes)
 5. [Fans](#5-fans)
@@ -41,7 +41,11 @@ sysfs files. It never writes to the embedded controller (EC) directly.
 - To build: Rust 1.97 or newer (`rustc`/`cargo`, or Ubuntu's `rustc-1.97`/`cargo-1.97`),
   `dpkg-dev` and internet access for the Rust crates.
 
-## 2. Build the package
+## 2. Get the package
+
+Easiest: download `omenctl_<version>_amd64.deb` from the
+[latest release](https://github.com/ZerunW/omen-ctl/releases/latest) and skip to
+[section 3](#3-install). To build it yourself:
 
 ```bash
 git clone https://github.com/ZerunW/omen-ctl
@@ -60,7 +64,7 @@ cd app && cargo test
 ## 3. Install
 
 ```bash
-sudo apt install ./packaging/out/omenctl_0.1.0_amd64.deb
+sudo apt install ./omenctl_0.2.4_amd64.deb  # or ./packaging/out/... if you built it
 sudo usermod -aG omenctl $USER              # then log out and in again
 sudo reboot                                 # loads the patched driver
 ```
@@ -95,6 +99,11 @@ If the patched driver is not loaded, the service is skipped (not failed) and log
 | Balanced | `balanced` | firmware default | default | your choice |
 | Unleashed | `performance` | PL1 90 W / PL2 130 W / PL4 200 W | power limit 115 W | software only |
 
+In Unleashed the CPU energy preference (EPP) is kept at `balance_performance`, so an idle
+desktop does not run the cores at full boost (power-profiles-daemon would set
+`performance`, about 45 W at idle). The power limits are the same, and under full load the
+CPU runs just as fast. Set `[cpu] unleashed_epp` to change it.
+
 Unleashed only holds while the fans are software controlled: the firmware keeps the
 90/130 W state only inside the window the driver refreshes in manual fan mode. That is
 why **Auto** fans are not available in Unleashed.
@@ -108,6 +117,20 @@ Switching order (enforced by the service):
 
 The mode survives reboots (`/var/lib/omenctl/state.json`).
 
+**Default modes.** Four optional rules, set in the desktop app ("Default modes"), with
+`omenctl defaults`, or in the `[modes]` table of the config:
+
+| Rule | Values | Meaning |
+|---|---|---|
+| At startup | Last used, or a mode | Mode when the service starts (boot). With "Last used", a matching plugged in / on battery rule wins; otherwise the mode from before the reboot is kept. |
+| Plugged in | No change, or a mode | Switch to this mode when the adapter is connected. |
+| On battery | No change, or a mode | Switch to this mode when the adapter is removed. |
+| Low battery | No change, or a mode | Switch to this mode once when the charge falls to the threshold (default 20%, 5 to 50) while unplugged. It acts again after plugging in or after the charge rose 5% above the threshold. It also wins at startup when the battery is already that low. |
+
+The power-source rules act only when the power source changes (and at startup, as above).
+You can still change the mode by hand at any time. If overheat protection is holding the
+machine in Balanced when you plug in, Unleashed is resumed once it has cooled down.
+
 ## 5. Fans
 
 Fan speeds are set in levels of 100 rpm from **18 (1800 rpm) to 52 (5200 rpm)**.
@@ -116,7 +139,7 @@ The driver never writes 0 (on this EC, 0 means stop).
 | Fan mode | Behaviour |
 |---|---|
 | Auto | The BIOS controls the fans. Not available in Unleashed. |
-| Curve (default) | Each fan follows its curve, using the hotter of CPU and GPU. Speeds rise at once and fall gradually. |
+| Curve (default) | Each fan follows its curve, using the hotter of CPU and GPU averaged over 5 seconds, so short load spikes don't move the fans. Speeds rise at once, are held for 15 seconds, then fall by 50 rpm per second. At 92 °C both fans go to full speed at once (no averaging). |
 | Manual | Both fans at one fixed speed. |
 | Max | Both fans at 5200 rpm. The firmware's own "max fan" switch is never used (it can freeze the fan controller on this model). |
 
@@ -133,16 +156,26 @@ Curves must not go down as the temperature rises; the editor and the service bot
 
 Start **OMEN Control** from the application menu, or run `omenctl-gui`.
 
-- **Mode** and **Fan control** switch immediately.
-- **Manual speed**: moving the slider switches to Manual when you let go. The tick on the
-  slider marks the recommended speed; it turns amber when you are below it.
-- The strip in the middle shows CPU and GPU temperature, power and fan speeds with the last
-  60 seconds. "Idle" means the GPU is asleep; it is not woken up to be measured.
-- **Fan curve** (collapsed by default): drag the points, then **Apply**. **Revert** drops
-  your edits, **Reset** loads the BIOS table into the editor (applied only with Apply).
+- **Mode** (top right) and the **Fans** buttons switch immediately.
+- **Tiles**: CPU and GPU temperature and power, fan speeds, and the power source
+  (adapter rating on AC; charge, draw and time left on battery). "Idle" means the GPU is
+  asleep; it is not woken up to be measured.
+- **Power chart**: CPU and GPU power over the last 90 seconds. On battery it also shows
+  the whole machine's draw ("System"); Linux cannot measure that while on AC.
+- **Fans**: the speed slider appears only in Manual. Selecting Manual starts from the
+  current fan speed. The tick marks the recommended speed; a note appears when you are
+  below it.
+- **Fan curve** (open it from the Fans card): drag the points, then **Apply**. **Revert**
+  drops your edits, **Reset to BIOS table** loads the BIOS table into the editor (applied
+  only with Apply).
+- **Power supply**: source, adapter rating, USB-C power input, battery state, time left,
+  health (full capacity compared with the design capacity) and charge cycles.
+- **Default modes**: the four rules and the low battery threshold described in [Modes](#4-modes); saved immediately.
+- **Auto / Light / Dark** (top right): follow the desktop theme or force light or dark. The
+  choice is saved in `~/.config/omenctl/gui.toml`.
 - Hover the (i) icons for explanations.
 
-Options: `--theme light|dark|system` (default: follow the system), `--socket PATH`.
+Options: `--theme light|dark|system` (for this run only; otherwise the saved choice), `--socket PATH`.
 
 ## 7. Command line
 
@@ -151,7 +184,15 @@ omenctl status            # or: omenctl status --json
 omenctl mode saver        # saver | balanced | unleashed
 omenctl fan curve         # auto | curve | max | 18..52
 omenctl fan 30            # manual, 3000 rpm
+omenctl defaults          # show the startup / plugged in / on battery rules
+omenctl defaults ac unleashed      # startup | ac | battery, then keep | saver | balanced | unleashed
+omenctl defaults startup keep      # keep = last used (startup) or no change (ac, battery, low)
+omenctl defaults low saver         # mode when the battery runs low
+omenctl defaults low-at 15         # low battery threshold, 5-50 %
 ```
+
+`omenctl status` also shows the power source, the adapter rating (when the driver reports
+it), the battery and USB-C power input.
 
 Errors (for example `fan auto` in Unleashed) are printed and the exit code is 1.
 
@@ -164,10 +205,13 @@ the service refuse to start (see `journalctl -u omenctld`).
 | Setting | Default | Meaning |
 |---|---|---|
 | `default_mode` | `balanced` | Mode on the very first start |
+| `[modes] startup`, `on_ac`, `on_battery`, `on_low_battery` | `keep` | Default-mode rules (see [Modes](#4-modes)); written by the desktop app |
+| `[modes] low_battery_percent` | `20` | Low battery threshold (5 to 50 %) |
 | `unleashed_concurrent_75w` | `true` | Set the 75 W concurrent target in Unleashed |
 | `[rapl] <mode> = [PL1, PL2]` | not set | Optional intel_rapl limits per mode (W, PL2 at most 130) |
-| `[fan] fall` | `0.4` | How fast speeds decrease (share of the gap per second) |
+| `[fan] average_s`, `hold_s`, `fall_per_s` | `5`, `15`, `0.5` | Curve temperature averaging (s), hold after a rise (s), fall rate (levels of 100 rpm per second) |
 | `[fan.cpu_curve]`, `[fan.gpu_curve]` | BIOS table | Written by the desktop app on Apply |
+| `[cpu] unleashed_epp` | `balance_performance` | CPU EPP while in Unleashed (`keep` = leave it to power-profiles-daemon) |
 | `[protect] fans_max_at` | `92` | Both fans to maximum at this temperature (°C) |
 | `[protect] drop_at`, `drop_after_s` | `95`, `10` | Leave Unleashed after this long at this temperature |
 | `[protect] restore_below`, `restore_after_s` | `80`, `30` | Return to the selected mode after cooling |
@@ -194,7 +238,9 @@ Every failure path ends with more cooling and less power.
 
 - **Sleep**: after resume the service re-applies the full mode switch (the EC can lose its
   state while asleep).
-- **AC adapter**: in Unleashed, plugging or unplugging re-applies the 75 W target.
+- **AC adapter**: plugging or unplugging applies your plugged in / on battery rule; without
+  a rule, Unleashed re-applies the 75 W target. A change while asleep is handled right
+  after resume.
 - **GNOME power menu / power-profiles-daemon**: if something else changes the platform
   profile, the service adopts it as the new mode (with the safe switching order).
 - **GPU**: the GPU temperature is read through NVML only while the GPU is already awake,
@@ -228,7 +274,7 @@ Emergency, without the package tools:
 
 ```bash
 sudo systemctl disable --now omenctld
-sudo dkms remove omenctl-hp-wmi/0.1.0 --all
+sudo dkms remove omenctl-hp-wmi/0.2.4 --all
 sudo reboot
 ```
 
