@@ -12,6 +12,13 @@
 //! NVML session blocks until resume. On the control loop that stalled the fan
 //! control and tripped the service watchdog (2026-11-08). Now the loop only reads
 //! cached values; a stuck query just makes the values go stale (treated as unknown).
+//!
+//! The NVML library itself stays loaded (`pin_library`). Unloading it after every
+//! read leaked one eventfd per read (driver 580.178.04): after ~1000 reads, about
+//! 85 minutes with the GPU awake, the service hit its 1024 open file limit, could no
+//! longer write the fan or kick files, and the kernel watchdog put the fans at
+//! maximum (2026-11-08). With the library loaded, nvmlInit/nvmlShutdown leak nothing
+//! and no /dev/nvidia* file stays open between reads.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -43,8 +50,20 @@ fn query() -> Result<(f32, Option<f32>), String> {
     let t = dev.temperature(TemperatureSensor::Gpu).map_err(|e| format!("NVML temperature: {e}"))?;
     let p = dev.power_usage().ok().map(|mw| mw as f32 / 1000.0);
     drop(dev);
-    drop(nvml); // nvmlShutdown + unload: nothing stays open
+    drop(nvml); // nvmlShutdown: no device file stays open (the library stays loaded)
     Ok((t as f32, p))
+}
+
+/// Keeps libnvidia-ml.so.1 (the name nvml-wrapper loads) in memory for the life of
+/// the process, so the dlclose in `Nvml`'s drop never unloads it. Loading the library
+/// opens no device file; only nvmlInit does, and nvmlShutdown closes them again.
+fn pin_library() {
+    // SAFETY: plain dlopen of a system library with a static C string; the handle is
+    // never closed (RTLD_NODELETE keeps the library even if it were).
+    let h = unsafe { libc::dlopen(c"libnvidia-ml.so.1".as_ptr(), libc::RTLD_NOW | libc::RTLD_NODELETE) };
+    if h.is_null() {
+        eprintln!("GPU: libnvidia-ml.so.1 not loaded (no NVIDIA driver?)");
+    }
 }
 
 impl GpuMonitor {
@@ -55,6 +74,7 @@ impl GpuMonitor {
     /// Background reader: queries only while the GPU was reported active in the
     /// last 1.5 s, at most every `GPU_POLL_S` seconds.
     fn worker(self) {
+        pin_library();
         let mut last_query: Option<Instant> = None;
         loop {
             std::thread::sleep(Duration::from_millis(500));

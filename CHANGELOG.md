@@ -2,6 +2,16 @@
 
 All notable changes. Versions are the `.deb` / workspace version.
 
+## 0.2.9 - 2026-11-08
+
+- Fix: the service leaked one open file per GPU reading (the NVML library was unloaded
+  after every read, and each unload left an eventfd behind). With the GPU awake it hit
+  the 1024 open file limit after about 85 minutes; fan and watchdog writes then failed
+  and the kernel watchdog ran the fans at maximum. The library now stays loaded;
+  NVML is still shut down between reads, so the GPU can still sleep.
+- The service now checks its open file count every 30 s and restarts itself cleanly
+  (via systemd) above 512, so a future leak cannot reach the limit.
+
 ## 0.2.8 - 2026-11-08
 
 - GPU priority (Unleashed): while the GPU draws 50 W or more, the CPU sustained limit

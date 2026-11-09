@@ -24,6 +24,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const TICK: Duration = Duration::from_secs(1);
+/// Open file guard: the service normally holds about 20 files. If something leaks
+/// (2026-11-08: NVML, one per GPU read), stop cleanly at this count, long before the
+/// 1024 limit makes the fan and kick writes fail, and let systemd restart us.
+const FD_GUARD: usize = 512;
+const FD_CHECK_EVERY: Duration = Duration::from_secs(30);
+
+fn open_fds() -> Option<usize> {
+    Some(std::fs::read_dir("/proc/self/fd").ok()?.count())
+}
 
 struct Args {
     root: PathBuf,
@@ -259,6 +268,8 @@ fn run() -> Result<(), String> {
     let mut last_wd = Instant::now();
     let mut resume = telemetry::ResumeDetector::new(telemetry::suspended_seconds());
     let mut next_tick = Instant::now() + TICK;
+    let mut last_fd_check = Instant::now();
+    let mut failure = None;
 
     while !term.load(Ordering::Relaxed) {
         let wait = next_tick.saturating_duration_since(Instant::now());
@@ -281,6 +292,13 @@ fn run() -> Result<(), String> {
             d.ctl.reapply(now);
         }
         d.tick();
+        if last_fd_check.elapsed() >= FD_CHECK_EVERY {
+            last_fd_check = Instant::now();
+            if let Some(n) = open_fds().filter(|&n| n >= FD_GUARD) {
+                failure = Some(format!("{n} open files (file handle leak): restarting"));
+                break;
+            }
+        }
         if let Some(every) = wd_every {
             if last_wd.elapsed() >= every {
                 notifier.notify("WATCHDOG=1");
@@ -293,7 +311,8 @@ fn run() -> Result<(), String> {
     notifier.notify("STOPPING=1");
     d.ctl.shutdown();
     let _ = std::fs::remove_file(&args.socket);
-    Ok(())
+    // An error exit makes systemd restart the service (Restart=on-failure).
+    failure.map_or(Ok(()), Err)
 }
 
 fn main() {

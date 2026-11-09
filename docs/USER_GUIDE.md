@@ -64,7 +64,7 @@ cd app && cargo test
 ## 3. Install
 
 ```bash
-sudo apt install ./omenctl_0.2.8_amd64.deb  # or ./packaging/out/... if you built it
+sudo apt install ./omenctl_0.2.9_amd64.deb  # or ./packaging/out/... if you built it
 sudo usermod -aG omenctl $USER              # then log out and in again
 sudo reboot                                 # loads the patched driver
 ```
@@ -295,7 +295,7 @@ Emergency, without the package tools:
 
 ```bash
 sudo systemctl disable --now omenctld
-sudo dkms remove omenctl-hp-wmi/0.2.8 --all
+sudo dkms remove omenctl-hp-wmi/0.2.9 --all
 sudo reboot
 ```
 
