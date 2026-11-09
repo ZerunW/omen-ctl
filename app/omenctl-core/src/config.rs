@@ -234,8 +234,26 @@ impl Default for ProtectConfig {
 
 impl Config {
     pub fn from_toml(s: &str) -> Result<Self, String> {
-        let c: Config = toml::from_str(s).map_err(|e| e.to_string())?;
-        c.validated()
+        Self::from_toml_with_warnings(s).map(|(c, _)| c)
+    }
+
+    /// Parse and validate, also returning warnings about keys the service does
+    /// not know (typos, or a key under the wrong `[table]`): those are ignored,
+    /// so the setting silently keeps its default.
+    pub fn from_toml_with_warnings(s: &str) -> Result<(Self, Vec<String>), String> {
+        let mut t: toml::Table = s.parse().map_err(|e: toml::de::Error| e.to_string())?;
+        let mut warnings = Vec::new();
+        // 0.2.0-0.2.4 shipped this key after `[modes]`, where TOML files it as
+        // modes.unleashed_concurrent_75w. Honour it there unless it is also set
+        // at the top.
+        let legacy = t.get_mut("modes").and_then(|m| m.as_table_mut()).and_then(|m| m.remove("unleashed_concurrent_75w"));
+        if let Some(v) = legacy {
+            warnings.push("unleashed_concurrent_75w belongs above [modes]; using the value found under [modes]".into());
+            t.entry("unleashed_concurrent_75w").or_insert(v);
+        }
+        unknown_keys(&t, &reference_table(), "", &mut warnings);
+        let c: Config = toml::Value::Table(t).try_into().map_err(|e: toml::de::Error| e.to_string())?;
+        Ok((c.validated()?, warnings))
     }
 
     pub fn validated(mut self) -> Result<Self, String> {
@@ -274,6 +292,29 @@ impl Config {
             }
         }
         Ok(self)
+    }
+}
+
+/// Every key the config knows, as a TOML table (optional values filled in so
+/// they serialize).
+fn reference_table() -> toml::Table {
+    let mut c = Config::default();
+    c.rapl = RaplConfig { power_saver: Some((1, 1)), balanced: Some((1, 1)), unleashed: Some((1, 1)) };
+    toml::Table::try_from(c).unwrap_or_default()
+}
+
+fn unknown_keys(t: &toml::Table, known: &toml::Table, prefix: &str, out: &mut Vec<String>) {
+    for (k, v) in t {
+        let path = format!("{prefix}{k}");
+        match known.get(k) {
+            None => out.push(format!("unknown setting {path} is ignored")),
+            Some(toml::Value::Table(kt)) => {
+                if let toml::Value::Table(vt) = v {
+                    unknown_keys(vt, kt, &format!("{path}."), out);
+                }
+            }
+            Some(_) => {}
+        }
     }
 }
 
@@ -419,6 +460,39 @@ mod tests {
         let bad = FanCurve { points: vec![crate::curve::CurvePoint { temp: 50.0, level: 30 }] };
         let ok = FanCurve::bios_default_cpu();
         assert!(with_curves("", &bad, &ok).is_err());
+    }
+
+    #[test]
+    fn example_config_has_no_unknown_keys() {
+        let (_, w) = Config::from_toml_with_warnings(include_str!("../../../packaging/config.toml")).unwrap();
+        assert!(w.is_empty(), "{w:?}");
+    }
+
+    #[test]
+    fn concurrent_75w_can_be_turned_off() {
+        // the packaged example with the switch flipped must really read false
+        let example = include_str!("../../../packaging/config.toml");
+        assert!(example.contains("unleashed_concurrent_75w = true"));
+        let off = example.replace("unleashed_concurrent_75w = true", "unleashed_concurrent_75w = false");
+        let (c, w) = Config::from_toml_with_warnings(&off).unwrap();
+        assert!(!c.unleashed_concurrent_75w);
+        assert!(w.is_empty(), "{w:?}");
+        // the key must sit above [modes] in the example
+        let at = example.find("unleashed_concurrent_75w").unwrap();
+        assert!(at < example.find("\n[").unwrap(), "unleashed_concurrent_75w must come before the first [table]");
+        // configs written by 0.2.0-0.2.4 have it under [modes]: still honoured
+        let (c, w) = Config::from_toml_with_warnings("[modes]\nunleashed_concurrent_75w = false\n").unwrap();
+        assert!(!c.unleashed_concurrent_75w);
+        assert_eq!(w.len(), 1, "{w:?}");
+        // the top-level value wins over a stray one
+        let c = Config::from_toml("unleashed_concurrent_75w = true\n[modes]\nunleashed_concurrent_75w = false\n").unwrap();
+        assert!(c.unleashed_concurrent_75w);
+    }
+
+    #[test]
+    fn unknown_keys_are_reported() {
+        let (_, w) = Config::from_toml_with_warnings("defualt_mode = \"x\"\n[fan]\nhold = 3\n[rapl]\nbalanced = [35, 45]\n").unwrap();
+        assert_eq!(w, vec!["unknown setting defualt_mode is ignored", "unknown setting fan.hold is ignored"]);
     }
 
     #[test]

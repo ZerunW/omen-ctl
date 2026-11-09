@@ -2,6 +2,21 @@
 
 All notable changes. Versions are the `.deb` / workspace version.
 
+## 0.2.5 - 2026-11-08
+
+- Fixed: `unleashed_concurrent_75w` in the example config sat below `[modes]`, so TOML
+  read it as part of `[modes]` and setting it to `false` had no effect. It is now at the
+  top. Configs from 0.2.0-0.2.4 that still have it under `[modes]` are honoured.
+- The service now logs unknown settings in `/etc/omenctl/config.toml` (typos or a key
+  under the wrong table) instead of silently using the default.
+- A failed driver build during install now prints a clear warning with the cause and
+  the command to retry.
+- Licence notices of all Rust libraries are installed in
+  `/usr/share/doc/omenctl/THIRD-PARTY-LICENSES.txt.gz`.
+- The decompiled HP ACPI tables were removed from the repository; `tools/dump-acpi.sh`
+  extracts them from your own machine.
+- CI: build and test run with a read-only token; only the release job can write.
+
 ## 0.2.4 - 2026-11-08
 
 - Desktop app: Auto / Light / Dark switch in the header; the choice is saved in

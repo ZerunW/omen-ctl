@@ -9,7 +9,21 @@ hpwmi-upstream/src/Module.symvers
 hpwmi-upstream/src/modules.order
 hpwmi-upstream/src/.tmp_versions/
 hpwmi-upstream/commits.json
-# raw ACPI binaries (keep decompiled .dsl); never commit the Windows key table
-acpi/*.dat
-acpi/msdm*
+# ACPI tables are HP's firmware code: never commit them (tools/dump-acpi.sh
+# extracts them from your own machine). MSDM holds the Windows product key.
+acpi/
+*.dat
+*msdm*
+# keys, secrets and local diagnostics
+*.pem
+*.key
+*.p12
+*.der
+*.priv
+.env
+.env.*
+*.btsnoop
+*.pcap
+*.pcapng
+bt-captures*/
 packaging/out/

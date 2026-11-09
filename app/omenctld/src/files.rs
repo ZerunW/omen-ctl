@@ -63,7 +63,13 @@ pub fn save_state(path: &Path, st: &State) -> std::io::Result<()> {
 /// systemd's ExecStopPost safety script leaves the machine in a safe state.
 pub fn load_config(path: &Path) -> Result<Config, String> {
     match std::fs::read_to_string(path) {
-        Ok(s) => Config::from_toml(&s).map_err(|e| format!("{}: {e}", path.display())),
+        Ok(s) => {
+            let (c, warnings) = Config::from_toml_with_warnings(&s).map_err(|e| format!("{}: {e}", path.display()))?;
+            for w in warnings {
+                eprintln!("omenctld: {}: {w}", path.display());
+            }
+            Ok(c)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default().validated()?),
         Err(e) => Err(format!("{}: {e}", path.display())),
     }

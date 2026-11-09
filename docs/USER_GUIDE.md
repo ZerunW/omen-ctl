@@ -64,17 +64,18 @@ cd app && cargo test
 ## 3. Install
 
 ```bash
-sudo apt install ./omenctl_0.2.4_amd64.deb  # or ./packaging/out/... if you built it
+sudo apt install ./omenctl_0.2.5_amd64.deb  # or ./packaging/out/... if you built it
 sudo usermod -aG omenctl $USER              # then log out and in again
 sudo reboot                                 # loads the patched driver
 ```
 
-What the installation does (all of it is undone by `apt remove`, see
+What the installation does (`apt remove` undoes it and keeps your config; `apt purge`
+also deletes config, state and the group; see
 [section 12](#12-uninstall-and-rollback)):
 
 | Step | Detail |
 |---|---|
-| Group `omenctl` | Members may use the socket. Created only if missing. |
+| Group `omenctl` | Members may use the socket, which means changing power limits and fan speeds (also below the recommended curve). Add only trusted users. Created only if missing. |
 | Driver | DKMS builds `hp-wmi` into `/lib/modules/<kernel>/updates/dkms/`, which is preferred over the stock module. Rebuilt for every new kernel. |
 | Service | `omenctld.service` is **enabled for the next boot but not started**. |
 | NVIDIA | Enables `nvidia-powerd` (or the bundled `omenctl-nvidia-powerd.service` if the driver has no unit) and `nvidia-suspend/resume/hibernate`. The previous state of these units is saved in `/var/lib/omenctl/rollback/units`. |
@@ -274,7 +275,7 @@ Emergency, without the package tools:
 
 ```bash
 sudo systemctl disable --now omenctld
-sudo dkms remove omenctl-hp-wmi/0.2.4 --all
+sudo dkms remove omenctl-hp-wmi/0.2.5 --all
 sudo reboot
 ```
 

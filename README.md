@@ -44,7 +44,7 @@ Raw logs are in [`logs/`](logs/).
   `omenctl status | mode ... | fan ... | defaults ...`.
 - Four safety layers; every failure ends with more cooling and less power.
 - One `.deb`: DKMS driver (rebuilt and MOK-signed for new kernels), service, tools,
-  `nvidia-powerd`. `apt remove` restores the original system.
+  `nvidia-powerd`. `apt remove` takes it all out again (see below).
 
 ## Install
 
@@ -64,12 +64,18 @@ omenctl mode unleashed
 omenctl-gui                                  # or "OMEN Control" in the app menu
 ```
 
-To remove everything: `sudo apt remove omenctl`. Full instructions, configuration and
+Members of the `omenctl` group can change power limits and fan speeds, so add only
+users you trust with the hardware.
+
+Uninstall: `sudo apt remove omenctl` removes the programs and the DKMS driver, gives the
+fans back to the BIOS and restores the NVIDIA service settings; reboot to load the stock
+driver again. `sudo apt purge omenctl` also deletes `/etc/omenctl`, `/var/lib/omenctl` and
+the `omenctl` group (if the package created it). Full instructions, configuration and
 troubleshooting: [docs/USER_GUIDE.md](docs/USER_GUIDE.md). Changes per version:
 [CHANGELOG.md](CHANGELOG.md).
 
 Bluetooth keyboard can't wake the laptop from suspend? That is a BlueZ problem, not an
-OMEN one; see the companion project [bt-le-wake](https://github.com/ZerunW/bt-le-wake).
+OMEN one; see the companion project [ubuntu-ble-wake-fix](https://github.com/ZerunW/ubuntu-ble-wake-fix).
 
 | Light theme, on battery | Default modes |
 |---|---|
@@ -77,7 +83,9 @@ OMEN one; see the companion project [bt-le-wake](https://github.com/ZerunW/bt-le
 
 ## How it works (8D3F specifics)
 
-Findings from the decompiled BIOS (`acpi/dsdt.dsl`, `acpi/ssdt17.dsl`) and EC readings:
+Findings from the decompiled BIOS (DSDT and SSDT17 of BIOS F.14) and EC readings. The
+firmware tables are HP's code and are not included; `tools/dump-acpi.sh` extracts and
+decompiles them from your own machine so you can follow the method names below:
 
 - WMI `0x20008`/`0x1A` writes the mode byte straight into EC `0x95` (0x30 balanced,
   0x31 performance, 0x04 is also recognised). In 0x31 the EC raises PL1/PL2/PL4 to 90/130/200 W.
@@ -117,9 +125,8 @@ omenctl-gui (user)     omenctl (user)
 | `packaging/` | `.deb` build script, systemd units, DKMS config, maintainer and safety scripts, app icon |
 | `docs/` | user guide, hardware test checklist, screenshots |
 | `hpwmi-upstream/` | upstream `hp-wmi.c` (commit `e931e54edb0f`) + `backport.patch` |
-| `tools/` | read-only EC snapshot script and hardware test scripts |
+| `tools/` | read-only EC snapshot script, ACPI extraction script (`dump-acpi.sh`) and hardware test scripts |
 | `logs/` | test logs |
-| `acpi/` | decompiled ACPI tables of board 8D3F, BIOS F.14 |
 | `PLAN.md` | design and implementation plan (Chinese) |
 
 ### Driver changes (`hpwmi-upstream/backport.patch`)
@@ -154,8 +161,13 @@ publishes a release with the package attached.
 ## License
 
 GPL-2.0-or-later (the driver is derived from the Linux kernel's `hp-wmi.c`). See `LICENSE`.
-The bundled IBM Plex Sans font is under the SIL Open Font License 1.1
-(`app/omenctl-gui/assets/IBMPlexSans-LICENSE.txt`).
+The desktop app links Apache-2.0 libraries (winit, glutin), so the `omenctl-gui` binary as a
+whole is distributed under GPL-3.0-or-later. The bundled IBM Plex Sans font is under the
+SIL Open Font License 1.1 (`app/omenctl-gui/assets/IBMPlexSans-LICENSE.txt`). The notices of
+all Rust libraries are installed as `/usr/share/doc/omenctl/THIRD-PARTY-LICENSES.txt.gz`.
+
+The ACPI tables of the HP firmware are not part of this repository (see
+`tools/dump-acpi.sh`).
 
 ## References
 

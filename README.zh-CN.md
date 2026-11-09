@@ -41,7 +41,7 @@ OMEN Gaming Hub 会发送的那些固件命令，在 Linux 上没有程序去发
   `omenctl status | mode ... | fan ... | defaults ...`。
 - 四层安全保护：任何故障都会朝"风扇更快、功率更低"的方向处理。
 - 一个 `.deb` 安装包：DKMS 驱动（内核更新后自动重新编译并用 MOK 密钥签名）、后台服务、工具、
-  `nvidia-powerd`。`apt remove` 可以完整恢复原来的系统。
+  `nvidia-powerd`。`apt remove` 可以把这些全部移除（见下文）。
 
 （程序界面和 `docs/` 下的文档都是英文。）
 
@@ -62,15 +62,20 @@ omenctl mode unleashed
 omenctl-gui                                  # 或者在应用菜单里打开 "OMEN Control"
 ```
 
-完全卸载：`sudo apt remove omenctl`。完整说明、配置和排错见 [docs/USER_GUIDE.md](docs/USER_GUIDE.md)（英文），
+`omenctl` 组的成员可以修改功率上限和风扇转速，所以只把你信任的用户加进这个组。
+
+卸载：`sudo apt remove omenctl` 移除程序和 DKMS 驱动，把风扇交还 BIOS，并恢复 NVIDIA 相关服务的设置；
+重启后加载原版驱动。`sudo apt purge omenctl` 还会删除 `/etc/omenctl`、`/var/lib/omenctl`，
+以及 `omenctl` 组（如果这个组是安装包创建的）。完整说明、配置和排错见 [docs/USER_GUIDE.md](docs/USER_GUIDE.md)（英文），
 每个版本的改动见 [CHANGELOG.md](CHANGELOG.md)。
 
 蓝牙键盘没法把电脑从休眠中唤醒？那是 BlueZ 的问题，和 OMEN 无关，见配套项目
-[bt-le-wake](https://github.com/ZerunW/bt-le-wake)。
+[ubuntu-ble-wake-fix](https://github.com/ZerunW/ubuntu-ble-wake-fix)。
 
 ## 工作原理（8D3F 专属细节）
 
-以下来自反编译的 BIOS（`acpi/dsdt.dsl`、`acpi/ssdt17.dsl`）和 EC 读数：
+以下来自反编译的 BIOS（BIOS F.14 的 DSDT 和 SSDT17）和 EC 读数。固件表是 HP 的代码，仓库里不包含；
+`tools/dump-acpi.sh` 可以在你自己的电脑上提取并反编译它们，方便对照下面提到的方法名：
 
 - WMI 命令 `0x20008`/`0x1A` 把模式字节直接写进 EC 的 `0x95`（0x30 平衡，0x31 性能，0x04 也能被识别）。
   在 0x31 下，EC 把 PL1/PL2/PL4 提高到 90/130/200 W。
@@ -108,9 +113,8 @@ omenctl-gui（普通用户）   omenctl（普通用户）
 | `packaging/` | `.deb` 打包脚本、systemd 单元、DKMS 配置、安装/卸载脚本和安全脚本 |
 | `docs/` | 使用说明和真机测试清单（英文） |
 | `hpwmi-upstream/` | 上游 `hp-wmi.c`（提交 `e931e54edb0f`）和 `backport.patch` |
-| `tools/` | 只读的 EC 快照脚本和真机测试脚本 |
+| `tools/` | 只读的 EC 快照脚本、ACPI 提取脚本（`dump-acpi.sh`）和真机测试脚本 |
 | `logs/` | 测试日志 |
-| `acpi/` | 主板 8D3F、BIOS F.14 的反编译 ACPI 表 |
 | `PLAN.md` | 设计和实施计划（中文） |
 
 ### 驱动修改（`hpwmi-upstream/backport.patch`）
@@ -144,8 +148,12 @@ GitHub Actions 会在每次推送时运行测试并编译 `.deb`；推送 `v*` �
 ## 许可证
 
 GPL-2.0-or-later（驱动源自 Linux 内核的 `hp-wmi.c`）。见 `LICENSE`。
-随附的 IBM Plex Sans 字体使用 SIL Open Font License 1.1
-（`app/omenctl-gui/assets/IBMPlexSans-LICENSE.txt`）。
+图形界面链接了 Apache-2.0 许可的库（winit、glutin），所以 `omenctl-gui` 这个程序整体按
+GPL-3.0-or-later 分发。随附的 IBM Plex Sans 字体使用 SIL Open Font License 1.1
+（`app/omenctl-gui/assets/IBMPlexSans-LICENSE.txt`）。所有 Rust 库的许可证声明安装在
+`/usr/share/doc/omenctl/THIRD-PARTY-LICENSES.txt.gz`。
+
+HP 固件的 ACPI 表不在本仓库中（见 `tools/dump-acpi.sh`）。
 
 ## 参考
 

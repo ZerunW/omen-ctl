@@ -40,11 +40,11 @@ if [ "$1" = "configure" ]; then
 	if ! dkms status -m omenctl-hp-wmi -v "$VERSION" 2>/dev/null | grep -q .; then
 		dkms add -m omenctl-hp-wmi -v "$VERSION" || true
 	fi
+	DRIVER_OK=1
 	if dkms build -m omenctl-hp-wmi -v "$VERSION" && dkms install -m omenctl-hp-wmi -v "$VERSION" --force; then
 		echo "omenctl: patched hp-wmi installed for kernel $(uname -r)."
 	else
-		echo "omenctl: WARNING: building the patched hp-wmi failed for $(uname -r)." >&2
-		echo "omenctl: the stock driver stays in use and omenctld will not start." >&2
+		DRIVER_OK=0
 	fi
 
 	# 5. NVIDIA Dynamic Boost + suspend helpers
@@ -64,11 +64,28 @@ if [ "$1" = "configure" ]; then
 		systemctl enable omenctld.service || true
 	fi
 
+	if [ "$DRIVER_OK" = 0 ]; then
+		cat >&2 <<MSG
+
+************************************************************************
+omenctl: THE DRIVER COULD NOT BE BUILT for kernel $(uname -r).
+The stock hp-wmi stays in use: omenctld will NOT start and none of the
+modes or fan controls work. The rest of the package is installed.
+Build log: /var/lib/dkms/omenctl-hp-wmi/$VERSION/build/make.log
+Common causes: missing linux-headers-$(uname -r), or Secure Boot without
+an enrolled MOK key. Fix the cause, then run:
+  sudo dkms install omenctl-hp-wmi/$VERSION && sudo reboot
+************************************************************************
+MSG
+	fi
+
 	cat <<'MSG'
 
 omenctl is installed. Next steps:
   1. Add yourself to the omenctl group:  sudo usermod -aG omenctl $USER
-     (takes effect after logging in again)
+     (takes effect after logging in again). Members can change power limits
+     and fan speeds (including speeds below the recommended curve), so add
+     only people you trust with the hardware.
   2. Reboot so the patched hp-wmi driver is loaded
      (or reload it by hand, see /usr/share/doc/omenctl/HARDWARE_TEST.md).
   3. The service starts automatically at the next boot; to start it now:

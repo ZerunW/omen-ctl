@@ -1,7 +1,8 @@
 #!/bin/bash
 # Read-only snapshot of the HP OMEN 8D3F EC fields we care about.
 # Loads ec_sys WITHOUT write_support (read-only, file mode 0400), reads a few bytes, unloads.
-# Offsets come from the decompiled DSDT (BIOS F.14), see acpi/dsdt.dsl Field (ERAM ...).
+# Offsets come from the decompiled DSDT (BIOS F.14), see Field (ERAM ...) in the DSDT
+# (tools/dump-acpi.sh extracts it from your machine).
 set -u
 F=/sys/kernel/debug/ec/ec0/io
 loaded_here=0

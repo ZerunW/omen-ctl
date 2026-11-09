@@ -8,6 +8,10 @@
 # power_saver, balanced or unleashed
 default_mode = "balanced"
 
+# In Unleashed mode, set the CPU+GPU concurrent power target to 75 W
+# (this raises the GPU power limit to 115 W)
+unleashed_concurrent_75w = true
+
 [modes]
 # These three are also set from the desktop app ("Default modes").
 # Values: keep, power_saver, balanced, unleashed
@@ -22,10 +26,6 @@ on_battery = "keep"
 # unplugged; acts again after plugging in or recharging 5% above it.
 on_low_battery = "keep"
 low_battery_percent = 20
-
-# In Unleashed mode, set the CPU+GPU concurrent power target to 75 W
-# (this raises the GPU power limit to 115 W)
-unleashed_concurrent_75w = true
 
 [rapl]
 # Optional: also write intel_rapl PL1/PL2 per mode, in watts

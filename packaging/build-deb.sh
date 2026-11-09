@@ -55,6 +55,9 @@ chmod 644 "$DOC/README.md"
 install -D -m644 "$TOP/hpwmi-upstream/backport.patch" "$DOC/hp-wmi-backport.patch"
 install -D -m644 "$TOP/app/omenctl-gui/assets/IBMPlexSans-LICENSE.txt" "$DOC/IBMPlexSans-LICENSE.txt"
 if [ -e "$TOP/LICENSE" ]; then install -m644 "$TOP/LICENSE" "$DOC/copyright"; fi
+python3 "$HERE/third-party-licenses.py" "$CARGO" "$TOP/app" "$DOC/THIRD-PARTY-LICENSES.txt"
+gzip -9n "$DOC/THIRD-PARTY-LICENSES.txt"
+chmod 644 "$DOC/THIRD-PARTY-LICENSES.txt.gz"
 
 # maintainer scripts
 for s in postinst prerm postrm; do
