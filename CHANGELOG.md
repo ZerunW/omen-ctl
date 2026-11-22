@@ -1,18 +1,36 @@
 # Changelog
 
-All notable changes. Versions are the `.deb` / workspace version.
+All notable changes to omenctl. The format is based on
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions are the `.deb` /
+workspace version. Release headings stay in the `## <version> - <date>` form because the
+release workflow extracts the notes with it.
+
+## Unreleased
+
+### Changed
+
+- Documentation: rewritten README, new `docs/internals.md` (WMI commands, EC fields,
+  verified behaviour), contributing guide, security policy and issue templates. Raw test
+  logs and the planning document were removed from the repository.
 
 ## 0.2.9 - 2026-11-08
 
-- Fix: the service leaked one open file per GPU reading (the NVML library was unloaded
+### Fixed
+
+- The service leaked one open file per GPU reading (the NVML library was unloaded
   after every read, and each unload left an eventfd behind). With the GPU awake it hit
   the 1024 open file limit after about 85 minutes; fan and watchdog writes then failed
   and the kernel watchdog ran the fans at maximum. The library now stays loaded;
   NVML is still shut down between reads, so the GPU can still sleep.
+
+### Added
+
 - The service now checks its open file count every 30 s and restarts itself cleanly
   (via systemd) above 512, so a future leak cannot reach the limit.
 
 ## 0.2.8 - 2026-11-08
+
+### Added
 
 - GPU priority (Unleashed): while the GPU draws 50 W or more, the CPU sustained limit
   (RAPL PL1) drops to 70 W so NVIDIA Dynamic Boost raises the GPU limit from 85 W to
@@ -22,11 +40,16 @@ All notable changes. Versions are the `.deb` / workspace version.
 
 ## 0.2.7 - 2026-11-08
 
+### Changed
+
 - Unleashed: CPU energy preference is now switched by load (`[cpu] unleashed_epp = "auto"`,
   the new default). `balance_performance` held the cores near 3.8 GHz even under load;
   now a busy CPU gets `performance` (4.85 GHz single core, 4.6 GHz all cores at 130 W)
   and an idle one goes back to `balance_performance` after 10 s. New options
   `auto_busy_percent`, `auto_idle_s`.
+
+### Added
+
 - Desktop app: draws its own window frame with rounded corners and GNOME-style
   window buttons (order taken from the desktop's button layout) instead of the
   dark fallback title bar on Wayland; resize from the edges, drag and
@@ -36,37 +59,57 @@ All notable changes. Versions are the `.deb` / workspace version.
 
 ## 0.2.6 - 2026-11-08
 
+### Fixed
+
 - Upgrades no longer leave the service stopped: if it was running and the driver in
   memory is exactly the newly installed one, it is started again. If the driver
   changed, the installer says to reboot.
 
 ## 0.2.5 - 2026-11-08
 
-- Fixed: `unleashed_concurrent_75w` in the example config sat below `[modes]`, so TOML
+### Fixed
+
+- `unleashed_concurrent_75w` in the example config sat below `[modes]`, so TOML
   read it as part of `[modes]` and setting it to `false` had no effect. It is now at the
   top. Configs from 0.2.0-0.2.4 that still have it under `[modes]` are honoured.
+
+### Added
+
 - The service now logs unknown settings in `/etc/omenctl/config.toml` (typos or a key
   under the wrong table) instead of silently using the default.
 - A failed driver build during install now prints a clear warning with the cause and
   the command to retry.
 - Licence notices of all Rust libraries are installed in
   `/usr/share/doc/omenctl/THIRD-PARTY-LICENSES.txt.gz`.
+
+### Removed
+
 - The decompiled HP ACPI tables were removed from the repository; `tools/dump-acpi.sh`
   extracts them from your own machine.
+
+### Security
+
 - CI: build and test run with a read-only token; only the release job can write.
 
 ## 0.2.4 - 2026-11-08
+
+### Added
 
 - Desktop app: Auto / Light / Dark switch in the header; the choice is saved in
   `~/.config/omenctl/gui.toml` (`--theme` still overrides it for one run).
 
 ## 0.2.3 - 2026-11-08
 
-- Fixed: the service could hang while the system prepared to sleep. NVML was called
+### Fixed
+
+- The service could hang while the system prepared to sleep. NVML was called
   on the control loop while nvidia-suspend had already suspended the GPU; the call
   blocked until resume, systemd's watchdog killed the service and the fans were
   handed to the BIOS. GPU readings now run on their own thread; a stuck reading
   only makes the GPU temperature "unknown".
+
+### Changed
+
 - Unleashed keeps the CPU energy/performance preference (EPP) at
   `balance_performance` (power-profiles-daemon sets `performance`). An idle
   desktop drops from about 45 W to about 25 W; the 90/130 W limits are unchanged.
@@ -74,23 +117,38 @@ All notable changes. Versions are the `.deb` / workspace version.
 
 ## 0.2.2 - 2026-11-08
 
+### Changed
+
 - Fan curves use the hotter of CPU and GPU averaged over 5 s, hold a raised speed
   for 15 s, then slow down by 50 rpm per second. One-second load spikes no longer
   make the fans pump. Emergency full speed at 92 °C still uses the current reading.
   New options `[fan] average_s`, `hold_s`, `fall_per_s` (replace `fall`).
+
+### Added
+
 - New app icon.
 
 ## 0.2.1 - 2026-11-08
 
-- Fixed: adapter rating is in units of 5 W (230 W adapter was shown as 460 W).
+### Fixed
+
+- Adapter rating is in units of 5 W (230 W adapter was shown as 460 W).
+
+### Added
+
 - Low battery rule: switch to a chosen mode once when the battery falls to a
   threshold (default 20 %) while unplugged.
 
 ## 0.2.0 - 2026-11-08
 
+### Changed
+
 - Desktop app redesigned as a data panel: stat tiles, 90 s power chart (CPU, GPU,
   whole system on battery), fan card, power supply card, default modes card.
   The manual speed slider only shows in Manual mode.
+
+### Added
+
 - Default modes: at startup, when plugged in, on battery (`[modes]` in the config,
   `omenctl defaults ...`).
 - Power supply readout: adapter rating, battery charge, draw, time left, health,
@@ -99,6 +157,8 @@ All notable changes. Versions are the `.deb` / workspace version.
 ## 0.1.0 - 2026-11-08
 
 First packaged version.
+
+### Added
 
 - Patched `hp-wmi` (DKMS): concurrent CPU+GPU power target, kernel fan watchdog,
   smooth fan handover to the BIOS.
