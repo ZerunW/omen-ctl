@@ -1,0 +1,52 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If the fans or temperatures behave dangerously right now, run
+        `sudo systemctl stop omenctld` first (balanced profile, fans back to the BIOS).
+        Please do not attach ACPI tables: they contain HP code and your Windows product key.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: omenctl version
+      placeholder: "dpkg -s omenctl | grep Version"
+    validations:
+      required: true
+  - type: input
+    id: board
+    attributes:
+      label: Board and BIOS
+      placeholder: "cat /sys/class/dmi/id/board_name /sys/class/dmi/id/bios_version"
+    validations:
+      required: true
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel and distribution
+      placeholder: "uname -r; lsb_release -ds"
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: omenctl status
+      description: Output of `omenctl status`.
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        `journalctl -u omenctld -b --no-pager | tail -50`, and for fan or driver problems
+        `cat /sys/devices/platform/hp-wmi/omenctl_kick` and `journalctl -k -b | grep -i hp_wmi`.
+      render: text
