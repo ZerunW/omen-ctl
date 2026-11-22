@@ -5,7 +5,7 @@ patch on top of it. The package builds `src/` with DKMS.
 
 | File | What it is |
 |---|---|
-| `hp-wmi-upstream-e931e54.c` | Unmodified `hp-wmi.c` from mainline Linux at commit [`e931e54edb0f`](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=e931e54edb0fae350007c4054cfbf095cc316bd8) ("platform/x86: hp-wmi: Disable hwmon attributes when no fans are usable"). This version already includes board `8D3F` support. |
+| `hp-wmi-upstream-e931e54.c` | Unmodified `hp-wmi.c` from mainline Linux at commit [`e931e54edb0f`](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=e931e54edb0fae350007c4054cfbf095cc316bd8) ("platform/x86: hp-wmi: Disable hwmon attributes when no fans are usable"). This version already includes board `8D3F` support (in mainline since v7.4-rc1). |
 | `hp-wmi-v7.0.c` | Unmodified `hp-wmi.c` as of Linux v7.0, the base of Ubuntu's 24.04 HWE kernel. Kept for comparison only; it has no 8D3F support and is not built. |
 | `backport.patch` | `diff -u hp-wmi-upstream-e931e54.c src/hp-wmi.c`. |
 | `src/hp-wmi.c` | The upstream file with `backport.patch` applied. This is what DKMS builds. |
