@@ -280,6 +280,7 @@ Every failure path ends with more cooling and less power.
 | Driver does not load (Secure Boot) | `mokutil --sb-state`; key enrolled? `modinfo hp_wmi \| grep signer` |
 | GPU stays at the old limit | `systemctl status nvidia-powerd` (or `omenctl-nvidia-powerd`); `nvidia-smi -q -d POWER` |
 | Fans stuck at full speed | `cat /sys/devices/platform/hp-wmi/omenctl_kick` (`tripped=1` means the kernel watchdog fired: is the service running?) |
+| Bluetooth keyboard cannot wake the laptop from suspend | Not an OMEN problem (BlueZ); see [ubuntu-ble-wake-fix](https://github.com/ZerunW/ubuntu-ble-wake-fix) |
 
 ## 12. Uninstall and rollback
 

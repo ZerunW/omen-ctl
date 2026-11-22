@@ -37,6 +37,19 @@ The patched driver lives in `hpwmi-upstream/src/hp-wmi.c`, and
 [hpwmi-upstream/README.md](hpwmi-upstream/README.md)). Regenerate the patch whenever you
 change the driver.
 
+## Repository layout
+
+| Path | Content |
+|---|---|
+| `app/omenctl-core` | Fan curve, configuration, sysfs access, control loop, protocol |
+| `app/omenctld` | Service |
+| `app/omenctl-cli` | Command line tool `omenctl` |
+| `app/omenctl-gui` | Desktop app (egui) |
+| `hpwmi-upstream/` | Upstream `hp-wmi.c`, the omenctl patch and the patched source built by DKMS ([provenance](hpwmi-upstream/README.md)) |
+| `packaging/` | `.deb` build script, systemd units, DKMS config, maintainer and safety scripts, icon |
+| `tools/` | Read-only EC snapshot, ACPI extraction (`dump-acpi.sh`), hardware test scripts |
+| `docs/` | User guide, internals, hardware test checklist, screenshots |
+
 ## What changes need
 
 - **Logic in `omenctl-core`** — a unit test in the same file. The controller tests use a

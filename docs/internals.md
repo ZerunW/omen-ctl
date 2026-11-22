@@ -108,9 +108,31 @@ the fans at a safe manual level and has temperature aborts; they write logs to
 | Fan pwm mapping: pwm 128 gives about 2500 rpm, pwm 221 about 4400 rpm, pwm 255 5200 rpm (the driver's double integer conversion loses one level, e.g. pwm 221 lands on level 44, not 45) | `perf-test2.sh`, `wd-test.sh`; emulated in `curve::driver_written_level` |
 
 Combined CPU + GPU load and the `gpu_priority_pl1` behaviour were measured later with
-`tools/stress-test.sh`, which runs as a normal user with omenctld in charge; see the
-README for the results and [CHANGELOG.md](../CHANGELOG.md) (0.2.7, 0.2.8) for the EPP
-and GPU priority numbers.
+`tools/stress-test.sh`, which runs as a normal user with omenctld in charge; the results
+are in the table below and in [CHANGELOG.md](../CHANGELOG.md) (0.2.7, 0.2.8).
+
+### Measured results
+
+HP OMEN 16-am0xxx, Ubuntu 24.04, HWE kernel 7.0, BIOS F.14. Stock Linux sends no
+performance commands to the EC, so the CPU stays at PL1 45 W / PL2 56 W (35 / 45 W in
+balanced) and the GPU at about 80 W.
+
+| | stock Linux | omenctl Unleashed |
+|---|---|---|
+| EC CPU limits PL1 / PL2 / PL4 | 45 / 56 / 90 W | 90 / 130 / 200 W |
+| CPU, 1 thread | – | 4.94 GHz |
+| CPU, 8 threads (one per P-core) | – | 4.41 GHz @ 130 W |
+| CPU, all 24 threads, first ~50 s | – | P 4.0–4.6 / E 3.3–3.7 GHz, 130 W |
+| CPU, all 24 threads sustained | ~2.45 GHz @ ~45–56 W | P 3.5–3.78 / E 2.8–3.03 GHz, 90 W |
+| GPU power limit | 80–83 W | 115 W |
+| CPU + GPU at full load, sustained | – | CPU 70 W + GPU limit 105 W (GPU priority) |
+
+Clock ranges depend on the load.
+
+The EC also behaves in ways that make a plain "switch to performance" unsafe on its own:
+the limits only hold while software keeps the fans under manual control (the `0x10`
+window), a fan target of 0 means stop, and handing the fans back to the BIOS can pause
+them for about two minutes. These are the reasons for the safety layers in section 8.
 
 ## 5. Driver patch
 
