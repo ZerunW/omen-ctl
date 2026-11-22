@@ -27,3 +27,5 @@ acpi/
 *.pcapng
 bt-captures*/
 packaging/out/
+# hardware test logs written by tools/*.sh
+logs/
