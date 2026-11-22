@@ -1,4 +1,4 @@
-<p align="right"><strong>EN</strong> | <a href="./README.zh-CN.md">简</a></p>
+English | [简体中文](README.zh-CN.md)
 
 <div align="center">
     <img src="packaging/icon/omenctl-gui-128.png" alt="omenctl icon" width="96">
@@ -6,7 +6,7 @@
 </div>
 
 <p align="center">
-    <em>Performance modes and fan control for the HP OMEN 16 (board 8D3F) on Linux.</em>
+    <em>Full performance mode and fan control for the HP OMEN 16 on Linux, like OMEN Gaming Hub on Windows.</em>
 </p>
 
 <p align="center">
@@ -15,7 +15,6 @@
     <img src="https://img.shields.io/badge/HP%20OMEN%2016-8D3F-C8102E?style=flat-square" alt="HP OMEN 16, board 8D3F" />
     <img src="https://img.shields.io/badge/Ubuntu-24.04-E95420?style=flat-square&logo=ubuntu&logoColor=white" alt="Ubuntu 24.04" />
     <img src="https://img.shields.io/badge/kernel-7.x-64748b?style=flat-square&logo=linux&logoColor=white" alt="Linux 7.x" />
-    <img src="https://img.shields.io/badge/Rust-1.97%2B-B7410E?style=flat-square&logo=rust&logoColor=white" alt="Rust 1.97 or later" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--2.0--or--later-A855F7?style=flat-square" alt="License: GPL-2.0-or-later" /></a>
 </p>
 
@@ -25,319 +24,236 @@
 
 ## What is omenctl?
 
-omenctl is a patched `hp-wmi` kernel driver, a root service (`omenctld`), a command line
-tool (`omenctl`) and a desktop app (OMEN Control) for the HP OMEN 16-am0xxx. It sends the
-same firmware commands that OMEN Gaming Hub sends on Windows, which unlocks the CPU and GPU
-power limits, and it drives the fans in software, because the firmware stops managing them
-in that state. Everything ships as one `.deb` that `apt remove` takes out again.
+On Linux, an OMEN 16 runs with the handbrake on: the CPU and the graphics card stay
+well below their power limits, because nothing tells the laptop to switch to its
+performance mode. omenctl does what OMEN Gaming Hub does on Windows. It gives you an app called **OMEN Control** with three power
+modes and your choice of fan behaviour, plus a live view of temperatures, fan speeds and
+power draw. Everything comes as a single `.deb` that you can remove again with one
+command.
 
-> [!WARNING]
-> omenctl runs as root, loads a modified kernel driver and changes how the embedded
-> controller (EC) runs the fans and power limits. It is tested on one machine (board
-> `8D3F`, BIOS F.14) and refuses to run on any other board. Read [Safety](#safety) before
-> installing. There is no warranty; use it at your own risk.
+## What you get
 
-## Why omenctl?
+- **Unleashed mode** — the full CPU and GPU power the hardware is built for: roughly twice
+  the sustained CPU power of stock Linux and up to 115 W for the RTX 5060 (stock: about
+  80 W).
+- **Power Saver and Balanced** — quieter, cooler and longer battery life when you don't
+  need the speed.
+- **Fan control** — let the BIOS decide, follow a fan curve that you can edit by dragging
+  points, pick a fixed speed, or run both fans at full speed.
+- **Automatic switching** — for example Unleashed when plugged in, Balanced on battery,
+  Power Saver when the battery runs low.
+- **Live readouts** — CPU and GPU temperature and power, fan speeds, adapter rating,
+  battery charge, health and time left.
+- **Safety built in** — if anything goes wrong the fans speed up and the power limits
+  drop. See [Safety](#safety).
 
-On Linux nothing sends the "performance" commands to this laptop's EC, so the CPU stays at
-PL1 45 W / PL2 56 W (35/45 W in balanced) and the RTX 5060 at about 80 W. Switching the
-EC into its performance state is easy; keeping it there is not: the limits only hold
-while software keeps the fans under manual control, and the EC's own fan behaviour around
-that state has sharp edges (a fan target of 0 means *stop*, and handing the fans back
-can pause them for two minutes). omenctl handles those details and adds the safety
-layers needed to run it unattended.
-
-**Status: beta.** In daily use on the author's machine. The driver, service, command line
-tool and desktop app are tested on hardware; parts of the
-[hardware test checklist](docs/HARDWARE_TEST.md) are still open.
-
-## Quick start
-
-On an HP OMEN 16-am0xxx (`cat /sys/class/dmi/id/board_name` prints `8D3F`) with Ubuntu
-24.04 and the HWE 7.0 kernel, download `omenctl_<version>_amd64.deb` from the
-[latest release](https://github.com/ZerunW/omen-ctl/releases/latest), then:
-
-```bash
-sudo apt install ./omenctl_*_amd64.deb
-sudo usermod -aG omenctl $USER               # log out and in
-sudo reboot                                  # loads the patched driver
-omenctl status
-omenctl mode unleashed
-omenctl-gui                                  # or "OMEN Control" in the app menu
-```
-
-## Features
-
-### Modes
-
-- **Power Saver, Balanced, Unleashed** — Unleashed raises the EC limits to CPU
-  PL1 90 W / PL2 130 W / PL4 200 W and the GPU limit to 115 W.
-- **Load-dependent EPP** — in Unleashed the CPU energy preference is `performance` while
-  the CPU is busy (4.85 GHz single core) and `balance_performance` when idle (about 16 W
-  instead of 31 W).
-- **GPU priority** — while the GPU is busy in Unleashed the CPU sustained limit drops to
-  70 W, so under combined load the GPU gets a 105 W limit instead of 85 W.
-- **Default modes** — rules for startup, adapter plugged in, on battery and low battery.
-
-### Fans
-
-- **Four fan modes** — BIOS auto, per-fan curves (default: the BIOS fan table), a fixed
-  speed, maximum.
-- **Steady curves** — 5 s temperature average and a 15 s hold before slowing down, so short
-  load spikes don't make the fans pump.
-- **Recommended speed** — a manual speed below what the curve wants is allowed and flagged.
-
-### Monitoring and apps
-
-- **Power readout** — CPU and GPU power with a 90 s chart, adapter rating (from the BIOS),
-  battery charge, draw, time left, health and cycles, USB-C power input.
-- **Desktop app** — Auto / Light / Dark themes, its own window frame with GNOME-style
-  buttons, text that follows the desktop text scaling, a drag-to-edit fan curve.
-- **Command line** — `omenctl status | mode | fan | defaults`, with `status --json`.
-
-### Packaging and safety
-
-- **Four safety layers** — kernel watchdog, systemd watchdog with a safety script, fan
-  speed check, thermal protection. Every failure ends with more cooling and less power.
-- **One `.deb`** — DKMS driver (rebuilt and MOK-signed for new kernels), service, tools,
-  `nvidia-powerd` setup, and a full rollback on removal.
-
-| Light theme, on USB-C power (90 W) | Default modes |
-|---|---|
-| ![Light theme](docs/screenshots/light.png) | ![Default modes card](docs/screenshots/default-modes.png) |
-
-## Measured results
-
-HP OMEN 16-am0xxx, Ubuntu 24.04, HWE kernel 7.0, BIOS F.14.
-
-| | stock Linux | omenctl Unleashed |
-|---|---|---|
-| EC CPU limits PL1 / PL2 / PL4 | 45 / 56 / 90 W | 90 / 130 / 200 W |
-| CPU, 1 thread | – | 4.94 GHz |
-| CPU, 8 threads (one per P-core) | – | 4.41 GHz @ 130 W |
-| CPU, all 24 threads, first ~50 s | – | P 4.0–4.6 / E 3.3–3.7 GHz, 130 W |
-| CPU, all 24 threads sustained | ~2.45 GHz @ ~45–56 W | P 3.5–3.78 / E 2.8–3.03 GHz, 90 W |
-| GPU power limit | 80–83 W | 115 W |
-| CPU + GPU at full load, sustained | – | CPU 70 W + GPU limit 105 W (GPU priority) |
-
-Clock ranges depend on the load. `tools/stress-test.sh` reproduces the CPU, GPU and
-combined tests as a normal user with omenctld in charge; how each EC fact was verified is
-in [docs/internals.md](docs/internals.md#4-verified-behaviour).
-
-## Compatibility
+## Will it work on my laptop?
 
 | | Supported |
 |---|---|
-| Laptop | HP OMEN 16-am0xxx, board `8D3F` (Intel Core, RTX 5060). The service and safety script do nothing on other boards. |
+| Laptop | HP OMEN 16-am0xxx, board `8D3F` (Intel Core, RTX 5060) |
 | BIOS | F.14 (tested) |
-| Distribution | Ubuntu 24.04 |
-| Kernel | 7.x (tested: HWE 7.0). DKMS skips other kernels, which keep the stock driver. |
-| Secure Boot | Off, or on with Ubuntu's DKMS MOK key enrolled |
-| GPU | NVIDIA driver with `nvidia-powerd` for the GPU power boost |
+| System | Ubuntu 24.04 with the HWE kernel 7.x (tested: 7.0) |
+| Secure Boot | Off, or on with the Ubuntu key enrolled (the install steps cover it) |
+| Graphics | NVIDIA driver installed from Ubuntu's packages |
 
-Other OMEN and Victus boards use different EC layouts and are not supported. Reports from
-the same board on other BIOS versions are welcome.
-
-## Installation
-
-Requirements: kernel headers for the running kernel (`linux-headers-generic-hwe-24.04`),
-Secure Boot either off or with a MOK key enrolled for DKMS (Ubuntu sets this up when you
-install third-party drivers; check with `mokutil --list-enrolled`).
+To check your laptop, open a terminal and run:
 
 ```bash
-sudo apt install ./omenctl_<version>_amd64.deb
-sudo usermod -aG omenctl $USER
-sudo reboot
+cat /sys/class/dmi/id/board_name
 ```
 
-The install creates the `omenctl` group, builds the driver with DKMS, enables
-`omenctld.service` for the next boot, enables `nvidia-powerd` and copies the example config
-to `/etc/omenctl/config.toml`. After the reboot:
+If it prints `8D3F`, you are good. Any other answer means the laptop is not supported:
+other OMEN and Victus models use a different controller, and omenctl refuses to run on
+them. To check the kernel, run `uname -r`; it should start with `7.`
 
-```bash
-modinfo -n hp_wmi                            # .../updates/dkms/hp-wmi.ko*
-systemctl status omenctld
-omenctl status
-```
+## Install
 
-**Uninstall.** `sudo apt remove omenctl` removes the programs and the DKMS driver, gives the
-fans back to the BIOS and restores the NVIDIA service settings; reboot to load the stock
-driver. `sudo apt purge omenctl` also deletes `/etc/omenctl`, `/var/lib/omenctl` and the
-`omenctl` group (if the package created it).
+1. Download `omenctl_<version>_amd64.deb` from the
+   [latest release](https://github.com/ZerunW/omen-ctl/releases/latest).
+2. Open a terminal in the folder where the file was saved (usually `Downloads`) and run:
+   ```bash
+   sudo apt install ./omenctl_*_amd64.deb
+   ```
+   The installer builds the driver for your kernel, which takes a minute or two.
+3. Add yourself to the `omenctl` group so the app may change settings without a password:
+   ```bash
+   sudo usermod -aG omenctl $USER
+   ```
+4. Restart the laptop. This loads the new driver. The background service starts by itself
+   from now on.
+5. Open **OMEN Control** from the application menu (or run `omenctl-gui`). The top left
+   should say "Connected".
 
-## Usage
+**Secure Boot.** If Secure Boot is on, the driver has to be signed with a key your
+computer trusts. Ubuntu normally sets this up for you the first time a driver is built:
+it asks you to choose a one-time password during step 2, and the next restart shows a blue
+"MOK management" screen where you choose *Enroll MOK* and type that password. If the
+install ends with "THE DRIVER COULD NOT BE BUILT", see the FAQ below. Turning Secure Boot
+off in the BIOS setup also works.
 
-```bash
-omenctl status                    # or: omenctl status --json
-omenctl mode unleashed            # saver | balanced | unleashed
-omenctl fan curve                 # auto | curve | max | 18..52 (units of 100 rpm)
-omenctl fan 30                    # fixed 3000 rpm
-omenctl defaults ac unleashed     # startup | ac | battery | low, then keep | saver | balanced | unleashed
-omenctl defaults low-at 15        # low battery threshold, 5-50 %
-omenctl-gui --theme dark          # system | light | dark, for this run only
-```
+## Using OMEN Control
 
-`fan auto` is refused in Unleashed (the EC would drop the raised limits). Errors exit
-with code 1. The desktop app and every command are described in the
-[user guide](docs/USER_GUIDE.md).
+Start **OMEN Control** from the application menu. The mode and fan buttons take effect
+immediately, and the app can be closed at any time, because a background service does
+the actual work and keeps the chosen mode after a restart. There is no tray icon.
 
-## Configuration
+### Modes
 
-`/etc/omenctl/config.toml` holds the default mode, mode rules, fan curve smoothing, the
-EPP and GPU priority options, optional RAPL limits per mode and the protection thresholds.
-Every key has a safe default, unknown keys are logged, and an invalid file makes the service
-refuse to start. Apply changes with `sudo systemctl restart omenctld`. The full table is in
-the [user guide](docs/USER_GUIDE.md#8-configuration); the annotated example is
-[`packaging/config.toml`](packaging/config.toml).
+Pick one with the buttons at the top right.
 
-## Build from source
-
-Needs Rust 1.97 or newer (or Ubuntu's `cargo-1.97`), `dpkg-dev`, `pkg-config`,
-`libwayland-dev`, `libxkbcommon-dev` and network access for the crates.
-
-```bash
-git clone https://github.com/ZerunW/omen-ctl
-cd omen-ctl
-(cd app && cargo test)            # unit tests + an end-to-end test of the service on a fake sysfs tree
-packaging/build-deb.sh            # -> packaging/out/omenctl_<version>_amd64.deb
-```
-
-`CARGO=cargo-1.97 packaging/build-deb.sh` uses Ubuntu's versioned cargo. Building changes
-nothing on the system. CI runs the tests and builds the `.deb` on every push; a `v*` tag
-publishes a release with the package attached.
-
-## How it works
-
-```text
-omenctl-gui (user)      omenctl (user)
-          \                 /
-      /run/omenctl.sock   (group omenctl, line-delimited JSON)
-                   |
-     omenctld (root, systemd Type=notify, watchdog)
-                   |   standard sysfs files only
-   platform_profile · hwmon pwm · omenctl_kick · omenctl_concurrent_tdp · omenctl_adapter_w
-                   |
-     hp-wmi (patched, DKMS)  ->  BIOS WMI  ->  EC
-```
-
-Findings from the decompiled BIOS and EC readings on 8D3F:
-
-- WMI query `0x1A` writes the mode byte into EC `0x95`; in `0x31` the EC raises
-  PL1/PL2/PL4 to 90/130/200 W.
-- Query `0x10` opens a ~120 s window in which the EC runs the fans at the software targets
-  (`0x2E`). The performance limits only hold while that window is kept alive, so the fans
-  must be driven by software. The driver refreshes it every 90 s in manual fan mode.
-- A `0x2E` fan target of 0 means **stop**, not automatic.
-- Query `0x29` byte 3 sets the CPU+GPU target used by NVIDIA Dynamic Boost; 75 W (the value
-  OMEN Gaming Hub uses) lifts the GPU limit to 115 W.
-
-The patch on top of mainline `hp-wmi` adds, on 8D3F only: the 75 W concurrent target, a
-kernel fan watchdog (`omenctl_kick`), a fan handover to the BIOS that holds the current speed
-instead of stopping the fans, and a read-only adapter rating. Userspace never writes the EC
-directly. Details, the EC field map and the verified behaviour are in
-[docs/internals.md](docs/internals.md).
-
-### Repository layout
-
-| Path | Content |
+| Mode | What it means in practice |
 |---|---|
-| `app/omenctl-core` | Fan curve, configuration, sysfs access, control loop, protocol |
-| `app/omenctld` | Service |
-| `app/omenctl-cli` | Command line tool `omenctl` |
-| `app/omenctl-gui` | Desktop app (egui) |
-| `hpwmi-upstream/` | Upstream `hp-wmi.c`, the omenctl patch and the patched source built by DKMS ([provenance](hpwmi-upstream/README.md)) |
-| `packaging/` | `.deb` build script, systemd units, DKMS config, maintainer and safety scripts, icon |
-| `tools/` | Read-only EC snapshot, ACPI extraction (`dump-acpi.sh`), hardware test scripts |
-| `docs/` | User guide, internals, hardware test checklist, screenshots |
+| **Power Saver** | Lowest power and heat. Use it on battery or for light work. |
+| **Balanced** | The system's standard power limits. Fine for everyday use. |
+| **Unleashed** | Full CPU and GPU power for games, rendering and compiling. The fans are always controlled by omenctl in this mode, so the fan setting "Auto" is not available. |
+
+If the CPU or GPU stays at 95 °C, Unleashed pauses by itself and comes back once the
+machine has cooled down.
+
+### Fans
+
+| Fan setting | What the fans do |
+|---|---|
+| **Auto** | The BIOS decides (not available in Unleashed). |
+| **Curve** | Each fan follows its own temperature curve. This is the default. Open **Fan curve**, drag the points and press **Apply**. **Reset to BIOS table** goes back to HP's curve. |
+| **Manual** | Both fans at one fixed speed (1800 to 5200 rpm) set with a slider. If you choose less than the curve would, the app tells you. |
+| **Max** | Both fans at full speed. |
+
+### Default modes
+
+The **Default modes** card lets the laptop pick a mode by itself: at startup, when you
+plug in, when you unplug, and when the battery drops below a level you choose.
+
+| Light theme, on USB-C power | Default modes card |
+|---|---|
+| ![Light theme](docs/screenshots/light.png) | ![Default modes card](docs/screenshots/default-modes.png) |
+
+The **Auto / Light / Dark** buttons switch the theme, and the (i) icons explain each
+part of the window. The same things are available from a terminal:
+
+```bash
+omenctl status                 # current mode, temperatures, fans
+omenctl mode unleashed         # saver | balanced | unleashed
+omenctl fan curve              # auto | curve | max | a speed such as 30 (3000 rpm)
+```
+
+The full list of settings, the config file and the command line are in the
+[user guide](docs/USER_GUIDE.md).
 
 ## Safety
 
-omenctl writes firmware settings that affect cooling. The design assumes something will
-eventually go wrong and makes every failure end with faster fans and lower power:
+omenctl controls the fans and the power limits, so it is built to fail towards cooling:
+if the service hangs or stops unexpectedly, the fans go to full speed and the laptop drops
+back to Balanced, and Unleashed pauses by itself at high temperatures. It has been tested
+on one machine only (board `8D3F`, BIOS F.14) and comes with no warranty. If the fans ever
+misbehave, choose **Max** in the app, or run `sudo systemctl stop omenctld` (the fans go to full
+speed, then back to the BIOS once the CPU has cooled), or restart the laptop, and see the
+[safety details](docs/USER_GUIDE.md#9-safety) and [SECURITY.md](SECURITY.md).
 
-- **Kernel watchdog** — while the fans are manual the service kicks the driver every
-  second; after 15 s without a kick the driver sets both fans to maximum on its own.
-- **systemd watchdog** — a hung service is killed and restarted; after any abnormal stop a
-  safety script sets the fans to maximum and the profile to balanced, and hands the fans
-  back to the BIOS only once the CPU is below 60 °C.
-- **Fan check** — measured speed below 70 % of the target for 10 s: fans to maximum,
-  Unleashed is left.
-- **Thermal protection** — 92 °C sends both fans to maximum in every fan mode; 10 s at 95 °C
-  leaves Unleashed until the machine has cooled. A missing CPU temperature counts as hot.
-- **Narrow command set** — only values observed from OMEN Gaming Hub are sent; the
-  firmware "max fan" switch, which can freeze the fans on this model, is never used.
+## Uninstall
 
-What it cannot protect against: firmware or EC behaviour that differs from BIOS F.14, a
-board other than 8D3F forced past the checks, or physical cooling problems (blocked vents,
-a failing fan). The CPU's and GPU's own thermal throttling stays active underneath.
-To report a security issue, see [SECURITY.md](SECURITY.md).
+```bash
+sudo apt remove omenctl
+sudo reboot
+```
 
-## Troubleshooting
+This gives the fans back to the BIOS and restores the original driver after the restart.
+`sudo apt purge omenctl` also deletes the settings. A rollback that works without the
+package tools is in the [user guide](docs/USER_GUIDE.md#12-uninstall-and-rollback).
+
+## FAQ and troubleshooting
 
 <details>
-<summary><strong><code>omenctl: cannot reach the omenctl service</code></strong></summary>
+<summary><strong>The app says it cannot reach the service</strong></summary>
 
-Check `systemctl status omenctld` and `journalctl -u omenctld -b`. If the service was
-"skipped", the patched driver is not loaded: `modinfo -n hp_wmi` must point to
-`updates/dkms`; see `dkms status` and `journalctl -k -b | grep -i hp_wmi`.
+You probably have not restarted since installing. Restart the laptop, then check
+`systemctl status omenctld`. If it says "skipped", the patched driver is not loaded; see
+the next entries.
 
 </details>
 
 <details>
-<summary><strong>No permission to use <code>/run/omenctl.sock</code></strong></summary>
+<summary><strong>"No permission to use /run/omenctl.sock"</strong></summary>
 
-`id` must list `omenctl`. Log out and in again after `usermod -aG omenctl $USER`.
-
-</details>
-
-<details>
-<summary><strong>The driver does not load with Secure Boot</strong></summary>
-
-Check `mokutil --sb-state` and that the DKMS key is enrolled; `modinfo hp_wmi | grep signer`
-shows which key signed the module.
+Your user is not in the `omenctl` group yet. Run `sudo usermod -aG omenctl $USER`, then
+log out and in again (or restart). `id` should list `omenctl`.
 
 </details>
 
 <details>
-<summary><strong>The GPU stays at the old power limit</strong></summary>
+<summary><strong>The install says the driver could not be built</strong></summary>
 
-`systemctl status nvidia-powerd` (or `omenctl-nvidia-powerd`), then
-`nvidia-smi -q -d POWER` while the GPU is under load.
-
-</details>
-
-<details>
-<summary><strong>Fans stuck at full speed</strong></summary>
-
-`cat /sys/devices/platform/hp-wmi/omenctl_kick`: `tripped=1` means the kernel watchdog fired.
-Check that the service is running.
+Usually the kernel headers are missing or Secure Boot has no enrolled key. Install the
+headers with `sudo apt install linux-headers-generic-hwe-24.04`, then run
+`sudo dkms install omenctl-hp-wmi/<version>` and restart. With Secure Boot on, check that
+the key was enrolled (`mokutil --list-enrolled`) or turn Secure Boot off. The build log is
+in `/var/lib/dkms/omenctl-hp-wmi/<version>/build/make.log`.
 
 </details>
 
 <details>
-<summary><strong>Bluetooth keyboard can't wake the laptop from suspend</strong></summary>
+<summary><strong>The GPU still seems limited to about 80 W</strong></summary>
 
-That is a BlueZ problem, not an OMEN one; see the companion project
+Switch to Unleashed and put the GPU under load, then run `nvidia-smi -q -d POWER`. The
+boost needs NVIDIA's `nvidia-powerd` service, which the installer enables; check it with
+`systemctl status nvidia-powerd`.
+
+</details>
+
+<details>
+<summary><strong>The fans are stuck at full speed</strong></summary>
+
+That is the safety fallback. Check that the service is running with
+`systemctl status omenctld`, then pick a mode again in the app.
+
+</details>
+
+<details>
+<summary><strong>Can I use it on another OMEN or Victus model?</strong></summary>
+
+No. Other models use a different embedded controller, and omenctl only runs on board
+`8D3F`. Reports from the same board with other BIOS versions are welcome.
+
+</details>
+
+<details>
+<summary><strong>My Bluetooth keyboard cannot wake the laptop</strong></summary>
+
+That is a Linux Bluetooth problem rather than an OMEN one; see
 [ubuntu-ble-wake-fix](https://github.com/ZerunW/ubuntu-ble-wake-fix).
 
 </details>
 
-More cases and an emergency rollback without the package tools are in the
-[user guide](docs/USER_GUIDE.md#11-troubleshooting).
+More cases are in the [user guide](docs/USER_GUIDE.md#11-troubleshooting).
+
+## Build from source
+
+You need Rust 1.97 or newer and a few system libraries. In short:
+
+```bash
+git clone https://github.com/ZerunW/omen-ctl
+cd omen-ctl
+packaging/build-deb.sh            # -> packaging/out/omenctl_<version>_amd64.deb
+```
+
+Requirements, tests and the repository layout are in [CONTRIBUTING.md](CONTRIBUTING.md)
+and the [user guide](docs/USER_GUIDE.md#2-get-the-package). Pushing a `v*` tag publishes a
+release with the package attached.
 
 ## Documentation
 
-- [User guide](docs/USER_GUIDE.md) — install, modes, fans, desktop app, command line,
-  configuration, troubleshooting, rollback
-- [Internals](docs/internals.md) — WMI commands, EC fields, verified behaviour, driver patch
-- [Hardware test checklist](docs/HARDWARE_TEST.md) — step-by-step tests with rollback
-- [Changelog](CHANGELOG.md)
+| Document | What is in it |
+|---|---|
+| [User guide](docs/USER_GUIDE.md) | Every mode, fan setting and option, configuration file, command line, safety rules, troubleshooting, rollback |
+| [Internals](docs/internals.md) | How it works: firmware (WMI) commands, controller fields, measured results, the driver patch, control rules, safety layers |
+| [Hardware test checklist](docs/HARDWARE_TEST.md) | Step-by-step tests with rollback, for testers |
+| [Changelog](CHANGELOG.md) | What changed in each version |
 
 ## Contributing
 
 Bug reports, test results from other BIOS versions and pull requests are welcome. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test and what changes need hardware
-evidence.
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Acknowledgments
 
