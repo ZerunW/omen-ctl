@@ -1,6 +1,6 @@
 //! Control loop. Call `tick(now)` once per second with a monotonic time in seconds.
 //!
-//! Safety rules encoded here (see PLAN.md):
+//! Safety rules encoded here (see docs/internals.md):
 //! - Fans are put in manual mode BEFORE switching platform profile, so the EC's
 //!   120 s software window never runs with stale/zero fan targets.
 //! - BIOS-auto fans are not allowed in Unleashed (the EC would drop the 90/130 W state).

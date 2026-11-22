@@ -180,7 +180,7 @@ Expected timeline:
 | After | What happens |
 |---|---|
 | 15-20 s | kernel log `hp_wmi: omenctl watchdog: no kick for 15s, fans forced to max level`; `omenctl_kick` shows `tripped=1` (the driver checks every 5 s) |
-| ~10 s later | both fans at about 5200 rpm (same ramp as `logs/wd-test-142901.log`) |
+| ~10 s later | both fans at about 5200 rpm (same ramp as measured with `tools/wd-test.sh`, see [internals.md](internals.md#4-verified-behaviour)) |
 | 15 s after the last report | systemd's watchdog fires and sends SIGABRT, which a stopped process only receives once continued; systemd sends SIGKILL after `TimeoutStopSec` (150 s) at the latest |
 | after the kill | `omenctl-safe-exit` runs (log line `daemon stopped abnormally`), then systemd restarts the service and `tripped` returns to 0 |
 

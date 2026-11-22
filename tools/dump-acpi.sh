@@ -1,6 +1,6 @@
 #!/bin/sh
 # Extract and decompile the ACPI tables of THIS machine into ./acpi/ so you can
-# follow the references in README.md (e.g. WMID.GSAS, GM2E, NPCF) on your own
+# follow the references in docs/internals.md (e.g. WMID.GSAS, GM2E, NPCF) on your own
 # firmware. The tables are HP's code: they are not part of this repository and
 # should not be published.
 #
