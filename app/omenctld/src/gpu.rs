@@ -4,13 +4,13 @@
 //! and polling tools such as nvidia-smi in a loop keep it awake. So:
 //! - `SysfsHw` only calls us while power/runtime_status is "active" (the GPU is
 //!   already awake because something else uses it);
-//! - NVML is loaded, queried and shut down again on every read (nothing stays open);
+//! - NVML is initialised, queried and shut down again on every read (no device file stays open);
 //! - reads are rate limited to one every `GPU_POLL_S` seconds.
 //!
 //! NVML calls run on their own thread and never on the control loop: while the
 //! system prepares for sleep, nvidia-suspend.service suspends the GPU and a new
 //! NVML session blocks until resume. On the control loop that stalled the fan
-//! control and tripped the service watchdog (2026-11-08). Now the loop only reads
+//! control and tripped the service watchdog (2026-11-08). The loop only reads
 //! cached values; a stuck query just makes the values go stale (treated as unknown).
 //!
 //! The NVML library itself stays loaded (`pin_library`). Unloading it after every

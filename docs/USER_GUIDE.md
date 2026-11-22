@@ -12,7 +12,8 @@ under Linux. It has four parts:
 
 The command line tool and the desktop app only talk to the service through the socket
 `/run/omenctl.sock`. Only the service writes to the hardware, and it only uses standard
-sysfs files. It never writes to the embedded controller (EC) directly.
+sysfs files. It never writes to the embedded controller (EC) directly. How the driver
+talks to the firmware is described in [internals.md](internals.md).
 
 ## Contents
 
@@ -265,7 +266,7 @@ Every failure path ends with more cooling and less power.
 - **GNOME power menu / power-profiles-daemon**: if something else changes the platform
   profile, the service adopts it as the new mode (with the safe switching order).
 - **GPU**: the GPU temperature is read through NVML only while the GPU is already awake,
-  at most every 5 s, and NVML is unloaded after each read so the GPU can sleep.
+  at most every 5 s, and NVML is shut down after each read so the GPU can sleep.
 - **Boot**: loading the driver briefly hands the fans to the EC (they may stop for about
   two minutes while the machine is idle); the service takes over when it starts.
 
