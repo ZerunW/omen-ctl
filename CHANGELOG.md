@@ -5,6 +5,15 @@ All notable changes to omenctl. The format is based on
 workspace version. Release headings stay in the `## <version> - <date>` form because the
 release workflow extracts the notes with it.
 
+## 0.3.2 - 2026-11-23
+
+### Fixed
+
+- Stopping or upgrading the service logged "lid close: inhibitor exited unexpectedly":
+  systemd sent SIGTERM to the whole service, including the `systemd-inhibit` child.
+  The unit now uses `KillMode=mixed`, so omenctld releases the inhibitor itself, and the
+  control loop no longer runs a tick after SIGTERM.
+
 ## 0.3.1 - 2026-11-23
 
 ### Changed

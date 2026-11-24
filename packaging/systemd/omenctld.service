@@ -19,6 +19,9 @@ WatchdogSec=15
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=150
+# SIGTERM to omenctld only: it releases the lid inhibitor (its systemd-inhibit
+# child) itself before exiting; leftover children are killed afterwards.
+KillMode=mixed
 StateDirectory=omenctl
 ConfigurationDirectory=omenctl
 ProtectSystem=strict

@@ -337,6 +337,11 @@ fn run() -> Result<(), String> {
         if Instant::now() < next_tick {
             continue;
         }
+        // No tick after SIGTERM: stop right away (the loop condition is only
+        // checked at the top, after the receive wait).
+        if term.load(Ordering::Relaxed) {
+            break;
+        }
         next_tick = Instant::now() + TICK;
         if resume.check(telemetry::suspended_seconds()) {
             eprintln!("resume from sleep detected: re-applying mode");
