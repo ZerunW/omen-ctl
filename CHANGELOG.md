@@ -5,6 +5,13 @@ All notable changes to omenctl. The format is based on
 workspace version. Release headings stay in the `## <version> - <date>` form because the
 release workflow extracts the notes with it.
 
+## 0.3.3 - 2026-11-23
+
+### Changed
+
+- `omenctl-web`: the VPN state is shown only in the network panel, no longer next to the
+  mode in the page header.
+
 ## 0.3.2 - 2026-11-23
 
 ### Fixed
