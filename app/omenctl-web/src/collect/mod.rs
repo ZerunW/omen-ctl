@@ -28,7 +28,7 @@ pub struct Collector {
     ticks_per_second: f64,
     igpu: Option<(PathBuf, u64)>,
     nvidia_name: Option<String>,
-    vpn_since: HashMap<&'static str, u64>,
+    vpn_since: HashMap<String, u64>,
 }
 
 impl Collector {
@@ -81,9 +81,9 @@ impl Collector {
         let cpu = cpu::sample(root, &mut self.cpu);
         let memory = memory(root);
         let net = network(root, &mut self.net, elapsed);
-        let vpn = vpn::sample(root, &mut self.vpn_since, time_ms);
         let processes =
             process::sample(root, &mut self.processes, elapsed, self.ticks_per_second);
+        let vpn = vpn::sample(root, &mut self.vpn_since, time_ms, &processes);
         let igpu = gpu::intel(root, &mut self.igpu, elapsed);
         let nvidia = gpu::nvidia(root, &mut self.nvidia_name);
         let (omen, omen_error) = match self.socket.as_deref().map(daemon_status) {

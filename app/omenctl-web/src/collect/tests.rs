@@ -276,36 +276,43 @@ fn malformed_inputs_leave_other_fields_available() {
 }
 
 #[test]
-fn vpn_globalprotect_connected_and_disconnected() {
+fn vpn_openconnect_connected_and_disconnected() {
     let tree = Tree::new();
-    tree.write("opt/paloaltonetworks/globalprotect/PanGPS", "");
+    write_stat(&tree, 77, "openconnect", 1, 1, 10);
+    tree.write("proc/77/status", "Uid:\t0\t0\t0\t0\nVmRSS: 9000 kB\n");
+    tree.write("proc/77/cmdline", b"openconnect\0--protocol=gp\0--user=someone\0vpn.example.edu\0");
     let mut collector = tree.collector();
+
+    // process running, tunnel not up yet
     let vpn = collector.sample_at(Instant::now()).vpn;
     assert_eq!(vpn.len(), 1);
-    assert_eq!(vpn[0].name, "GlobalProtect");
+    assert_eq!(vpn[0].name, "OpenConnect (GlobalProtect)");
     assert!(!vpn[0].connected);
     assert_eq!(vpn[0].interface, None);
-    assert_eq!(vpn[0].since_ms, None);
 
-    tree.write("sys/class/net/gpd0/operstate", "unknown\n");
+    tree.write("sys/class/net/tun0/operstate", "unknown\n");
     let first = collector.sample_at(Instant::now()).vpn;
     assert!(first[0].connected);
-    assert_eq!(first[0].interface.as_deref(), Some("gpd0"));
+    assert_eq!(first[0].interface.as_deref(), Some("tun0"));
     let since = first[0].since_ms;
     assert!(since.is_some());
     assert!(first[0].addresses.is_empty(), "addresses are only read on the real root");
-    let second = collector.sample_at(Instant::now()).vpn;
-    assert_eq!(second[0].since_ms, since, "connected time is kept between samples");
+    assert_eq!(collector.sample_at(Instant::now()).vpn[0].since_ms, since, "connected time is kept");
 
-    tree.write("sys/class/net/gpd0/operstate", "down\n");
+    tree.write("sys/class/net/tun0/operstate", "down\n");
     let down = collector.sample_at(Instant::now()).vpn;
     assert!(!down[0].connected);
     assert_eq!(down[0].since_ms, None);
 }
 
 #[test]
-fn vpn_absent_without_client_or_interface() {
+fn vpn_official_globalprotect_only_when_running_or_connected() {
     let tree = Tree::new();
+    // installed but not running: not listed
+    tree.write("opt/paloaltonetworks/globalprotect/PanGPS", "");
     tree.write("sys/class/net/wlo1/operstate", "up\n");
     assert!(tree.collector().sample_at(Instant::now()).vpn.is_empty());
+    tree.write("sys/class/net/gpd0/operstate", "unknown\n");
+    let vpn = tree.collector().sample_at(Instant::now()).vpn;
+    assert_eq!((vpn[0].name.as_str(), vpn[0].connected), ("GlobalProtect", true));
 }

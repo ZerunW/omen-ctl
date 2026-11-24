@@ -5,6 +5,16 @@ All notable changes to omenctl. The format is based on
 workspace version. Release headings stay in the `## <version> - <date>` form because the
 release workflow extracts the notes with it.
 
+## 0.3.1 - 2026-11-23
+
+### Changed
+
+- `omenctl-web`: VPN state also covers OpenConnect (any protocol; shown as e.g.
+  "OpenConnect (GlobalProtect)", interface from `-i` or the first `tun*`/`vpn*`). The
+  official GlobalProtect client is listed only while it runs or its `gpd*` interface
+  exists, not merely when installed. Command line options such as the user name are not
+  shown.
+
 ## 0.3.0 - 2026-11-23
 
 ### Added

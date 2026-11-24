@@ -69,7 +69,7 @@ cd app && cargo test
 ## 3. Install
 
 ```bash
-sudo apt install ./omenctl_0.3.0_amd64.deb  # or ./packaging/out/... if you built it
+sudo apt install ./omenctl_0.3.1_amd64.deb  # or ./packaging/out/... if you built it
 sudo usermod -aG omenctl $USER              # then log out and in again
 sudo reboot                                 # loads the patched driver
 ```
@@ -238,7 +238,7 @@ lid suspends again. Notes:
 `omenctl-web` is a read-only dashboard for a browser on another device: usage of every
 CPU core, memory, Intel and NVIDIA GPU usage, the processes `nvidia-smi` lists, every
 process (sortable, searchable), fans, temperatures, power and battery, charge limit,
-network rates and VPN state (GlobalProtect, Tailscale). Nothing can be changed through it.
+network rates and VPN state (OpenConnect, GlobalProtect, Tailscale). Nothing can be changed through it.
 
 It is installed but not enabled. It listens on `127.0.0.1:8787` (this machine only), so it
 is meant to be reached through a tunnel or reverse proxy on the same machine:
@@ -419,7 +419,7 @@ Emergency, without the package tools:
 
 ```bash
 sudo systemctl disable --now omenctld
-sudo dkms remove omenctl-hp-wmi/0.3.0 --all
+sudo dkms remove omenctl-hp-wmi/0.3.1 --all
 sudo reboot
 ```
 
