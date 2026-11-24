@@ -1,7 +1,9 @@
 [Unit]
 Description=omenctl performance and fan control (HP OMEN 16, board 8D3F)
 Documentation=file:///usr/share/doc/omenctl/USER_GUIDE.md
-After=systemd-modules-load.service
+# After power-profiles-daemon: it restores its saved profile at start, which would
+# otherwise override the mode omenctld applies.
+After=systemd-modules-load.service power-profiles-daemon.service
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

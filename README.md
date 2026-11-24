@@ -44,6 +44,13 @@ command.
   Power Saver when the battery runs low.
 - **Live readouts** — CPU and GPU temperature and power, fan speeds, adapter rating,
   battery charge, health and time left.
+- **Charge limit**: for a laptop that stays plugged in, stop charging at e.g. 60 % and
+  charge again at 55 %, with a one-time full charge before a trip.
+- **Lid close**: keep running with the lid closed (while plugged in, or always), to use
+  the laptop as a small server.
+- **Remote monitor** (optional, off by default): a read-only web dashboard with every CPU
+  core, memory, both GPUs and their processes, all processes, fans, power, network and VPN
+  state, for viewing from another device through a tunnel such as Cloudflare Tunnel.
 - **Safety built in** — if anything goes wrong the fans speed up and the power limits
   drop. See [Safety](#safety).
 
@@ -149,7 +156,7 @@ back to Balanced, and Unleashed pauses by itself at high temperatures. It has be
 on one machine only (board `8D3F`, BIOS F.14) and comes with no warranty. If the fans ever
 misbehave, choose **Max** in the app, or run `sudo systemctl stop omenctld` (the fans go to full
 speed, then back to the BIOS once the CPU has cooled), or restart the laptop, and see the
-[safety details](docs/USER_GUIDE.md#9-safety) and [SECURITY.md](SECURITY.md).
+[safety details](docs/USER_GUIDE.md#12-safety) and [SECURITY.md](SECURITY.md).
 
 ## Uninstall
 
@@ -160,7 +167,7 @@ sudo reboot
 
 This gives the fans back to the BIOS and restores the original driver after the restart.
 `sudo apt purge omenctl` also deletes the settings. A rollback that works without the
-package tools is in the [user guide](docs/USER_GUIDE.md#12-uninstall-and-rollback).
+package tools is in the [user guide](docs/USER_GUIDE.md#15-uninstall-and-rollback).
 
 ## FAQ and troubleshooting
 
@@ -225,7 +232,7 @@ That is a Linux Bluetooth problem rather than an OMEN one; see
 
 </details>
 
-More cases are in the [user guide](docs/USER_GUIDE.md#11-troubleshooting).
+More cases are in the [user guide](docs/USER_GUIDE.md#14-troubleshooting).
 
 ## Build from source
 

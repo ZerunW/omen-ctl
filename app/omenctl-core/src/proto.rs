@@ -1,13 +1,18 @@
 //! Line-delimited JSON protocol between the CLI/GUI and the daemon over
 //! /run/omenctl.sock. One request per line, one response per line.
 
-use crate::config::ModesConfig;
+use crate::config::{LidAction, ModesConfig};
 use crate::curve::FanCurve;
 use crate::power::PowerInfo;
 use crate::{FanMode, Mode};
 use serde::{Deserialize, Serialize};
 
 pub const SOCKET_PATH: &str = "/run/omenctl.sock";
+/// Read-only socket next to the control socket: accepts only `Status`, open to every
+/// local user (mode 0666). Used by the web monitor, which must not be able to change
+/// anything.
+pub const STATUS_SOCKET_NAME: &str = "omenctl-status.sock";
+pub const STATUS_SOCKET_PATH: &str = "/run/omenctl-status.sock";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -24,6 +29,14 @@ pub enum Request {
     GetSettings,
     /// Replace the mode rules; written to /etc/omenctl/config.toml.
     SetSettings { modes: ModesConfig },
+    /// Charge limit: stop at `limit` %, charge again at `resume` %. `limit` 0 = off.
+    /// Validated like `[battery]` and written to /etc/omenctl/config.toml.
+    SetCharge { limit: u8, resume: u8 },
+    /// Charge to 100 % once, ignoring the limit, until the adapter is unplugged
+    /// or the battery is full. Not saved. `on: false` cancels it.
+    ChargeFullOnce { on: bool },
+    /// What closing the lid does; written to /etc/omenctl/config.toml.
+    SetLid { close: LidAction },
 }
 
 /// Longest request line the daemon accepts (bytes).
@@ -56,6 +69,44 @@ pub struct Status {
     /// GPU priority active: CPU sustained power (W) lowered while the GPU is busy.
     #[serde(default)]
     pub gpu_priority_w: Option<u32>,
+    /// Charge limit state. `None` from services older than 0.3.0.
+    #[serde(default)]
+    pub charge: Option<ChargeStatus>,
+    /// Lid close setting and whether the lid switch is being ignored right now.
+    #[serde(default)]
+    pub lid: Option<LidStatus>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChargeState {
+    /// No limit set: the battery charges to full as usual.
+    Off,
+    /// On AC at or above the limit: charging is inhibited, the laptop runs from the adapter.
+    Holding,
+    /// On AC below the limit (or full-once): charging normally.
+    Charging,
+    /// On battery.
+    Discharging,
+    /// The kernel offers no charge control (driver without support, or no battery).
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChargeStatus {
+    /// 0 = off.
+    pub limit: u8,
+    pub resume: u8,
+    pub state: ChargeState,
+    /// A one-time full charge is in progress.
+    pub full_once: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LidStatus {
+    pub close: LidAction,
+    /// The service holds the logind lid-switch inhibitor (closing the lid does nothing).
+    pub inhibited: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

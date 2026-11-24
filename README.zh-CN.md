@@ -37,6 +37,10 @@
 - **风扇控制** — 交给 BIOS 自动管理，按可以拖动编辑的风扇曲线运行，设定固定转速，或者双风扇全速。
 - **自动切换** — 比如插电时用 Unleashed，用电池时用 Balanced，电量低时用 Power Saver。
 - **实时读数** — CPU 和显卡的温度与功率、风扇转速、电源适配器功率、电池电量、健康度和剩余时间。
+- **充电上限**：一直插着电时，比如充到 60% 就停，降到 55% 再充；出门前可以临时充满一次。
+- **合盖不睡眠**：合上盖子继续运行（只在插电时，或者总是），可以把笔记本当小服务器用。
+- **远程监控**（可选，默认关闭）：只读的网页面板，显示每个 CPU 核心、内存、两块显卡及其进程、
+  全部进程、风扇、功率、网速和 VPN 状态，可以通过 Cloudflare Tunnel 等隧道在别的设备上查看。
 - **内置安全保护** — 出任何问题，风扇都会加速，功率上限也会降低。见[安全说明](#安全说明)。
 
 ## 我的笔记本能用吗？
@@ -127,7 +131,7 @@ omenctl fan curve              # auto | curve | max | 或者转速，如 30（30
 omenctl 控制风扇和功率上限，所以按“出错时倾向于加强散热”来设计：服务卡死或意外停止时，风扇会全速运转，
 笔记本退回 Balanced；温度过高时 Unleashed 会自动暂停。它只在一台机器上测试过（主板 `8D3F`，BIOS F.14），
 不提供任何担保。如果风扇行为异常，可以在应用里选 **Max**，或运行 `sudo systemctl stop omenctld`
-（风扇先全速，CPU 降温后交还 BIOS），或者直接重启笔记本。详见[安全细节](docs/USER_GUIDE.md#9-safety)
+（风扇先全速，CPU 降温后交还 BIOS），或者直接重启笔记本。详见[安全细节](docs/USER_GUIDE.md#12-safety)
 和 [SECURITY.md](SECURITY.md)。
 
 ## 卸载
@@ -138,7 +142,7 @@ sudo reboot
 ```
 
 卸载会把风扇交还 BIOS，重启后恢复原版驱动。`sudo apt purge omenctl` 还会删除设置。不依赖包管理工具的回滚方法见
-[使用说明](docs/USER_GUIDE.md#12-uninstall-and-rollback)。
+[使用说明](docs/USER_GUIDE.md#15-uninstall-and-rollback)。
 
 ## 常见问题
 
@@ -198,7 +202,7 @@ sudo reboot
 
 </details>
 
-更多情况见[使用说明](docs/USER_GUIDE.md#11-troubleshooting)。
+更多情况见[使用说明](docs/USER_GUIDE.md#14-troubleshooting)。
 
 ## 从源码编译
 

@@ -1,7 +1,7 @@
 //! Persistent files: saved state (/var/lib/omenctl/state.json) and the config
 //! (/etc/omenctl/config.toml). All writes are atomic (temp file + fsync + rename).
 
-use omenctl_core::config::Config;
+use omenctl_core::config::{self, BatteryConfig, Config, LidAction};
 use omenctl_core::{FanMode, Mode};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -81,23 +81,29 @@ pub fn save_curves(
     cpu: &omenctl_core::curve::FanCurve,
     gpu: &omenctl_core::curve::FanCurve,
 ) -> Result<(), String> {
-    let existing = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("{}: {e}", path.display())),
-    };
-    let out = omenctl_core::config::with_curves(&existing, cpu, gpu)?;
-    write_atomic(path, out.as_bytes(), 0o644).map_err(|e| format!("{}: {e}", path.display()))
+    edit_config(path, |existing| config::with_curves(existing, cpu, gpu))
 }
 
 /// Write new (already validated) mode rules into the config file, keeping comments.
 pub fn save_modes(path: &Path, m: &omenctl_core::config::ModesConfig) -> Result<(), String> {
+    edit_config(path, |existing| config::with_modes(existing, m))
+}
+
+pub fn save_battery(path: &Path, battery: &BatteryConfig) -> Result<(), String> {
+    edit_config(path, |existing| config::with_battery(existing, battery))
+}
+
+pub fn save_lid(path: &Path, close: LidAction) -> Result<(), String> {
+    edit_config(path, |existing| config::with_lid(existing, close))
+}
+
+fn edit_config(path: &Path, edit: impl FnOnce(&str) -> Result<String, String>) -> Result<(), String> {
     let existing = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("{}: {e}", path.display())),
     };
-    let out = omenctl_core::config::with_modes(&existing, m)?;
+    let out = edit(&existing)?;
     write_atomic(path, out.as_bytes(), 0o644).map_err(|e| format!("{}: {e}", path.display()))
 }
 
@@ -132,6 +138,27 @@ mod tests {
         let c = load_config(&p).unwrap();
         assert_eq!(c.fan.gpu_curve, cpu);
         assert!(std::fs::read_to_string(&p).unwrap().contains("# hello"));
+        std::fs::remove_dir_all(d).ok();
+    }
+
+    #[test]
+    fn saves_battery_and_lid_settings() {
+        let d = std::env::temp_dir().join(format!("omenctld-battery-lid-{}", std::process::id()));
+        let p = d.join("config.toml");
+        let before = "# settings\n[battery]\ncharge_limit = 0 # limit\n";
+        write_atomic(&p, before.as_bytes(), 0o644).unwrap();
+        let bad = BatteryConfig { charge_limit: 60, charge_resume: 60 };
+        assert!(save_battery(&p, &bad).is_err());
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), before);
+
+        let battery = BatteryConfig { charge_limit: 60, charge_resume: 55 };
+        save_battery(&p, &battery).unwrap();
+        save_lid(&p, LidAction::IgnoreOnAc).unwrap();
+        let cfg = load_config(&p).unwrap();
+        assert_eq!(cfg.battery, battery);
+        assert_eq!(cfg.lid.close, LidAction::IgnoreOnAc);
+        let text = std::fs::read_to_string(&p).unwrap();
+        assert!(text.contains("# settings") && text.contains("# limit"), "{text}");
         std::fs::remove_dir_all(d).ok();
     }
 }

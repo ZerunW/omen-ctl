@@ -37,11 +37,11 @@ Purpose: the code builds on the machine's Rust 1.97 and all tests pass.
 ```bash
 cd ~/omen-ctl/app && cargo test          # or cargo-1.97
 cd .. && packaging/build-deb.sh
-dpkg-deb -c packaging/out/omenctl_0.2.9_amd64.deb | less
+dpkg-deb -c packaging/out/omenctl_0.3.0_amd64.deb | less
 ```
 
 Expected: all tests `ok`; the .deb lists `usr/sbin/omenctld`, `usr/bin/omenctl`,
-`usr/bin/omenctl-gui`, `usr/src/omenctl-hp-wmi-0.2.9/`, the systemd units and docs.
+`usr/bin/omenctl-gui`, `usr/src/omenctl-hp-wmi-0.3.0/`, the systemd units and docs.
 
 Rollback: none needed (no system change).
 
@@ -50,7 +50,7 @@ Rollback: none needed (no system change).
 Purpose: maintainer scripts run cleanly; DKMS builds and signs the driver.
 
 ```bash
-sudo apt install ./packaging/out/omenctl_0.2.9_amd64.deb
+sudo apt install ./packaging/out/omenctl_0.3.0_amd64.deb
 dkms status
 modinfo /lib/modules/$(uname -r)/updates/dkms/hp-wmi.ko* | grep -E 'signer|srcversion|vermagic'
 systemctl is-enabled omenctld nvidia-powerd omenctl-nvidia-powerd nvidia-suspend nvidia-resume nvidia-hibernate
@@ -58,7 +58,7 @@ cat /var/lib/omenctl/rollback/units
 systemctl is-active omenctld
 ```
 
-Expected: `omenctl-hp-wmi/0.2.9 ... installed`; signer is the machine's MOK key;
+Expected: `omenctl-hp-wmi/0.3.0 ... installed`; signer is the machine's MOK key;
 `omenctld` enabled but **inactive**; one of the two powerd units enabled; the rollback file
 lists the units' state before installation.
 
@@ -78,7 +78,7 @@ cat /sys/devices/platform/hp-wmi/omenctl_kick # armed=0 tripped=0 ...
 Expected: path under `updates/dkms`; `omenctl_kick` exists. The fans may stop for about
 two minutes after loading (EC takes over), so do this while idle.
 
-Rollback: `sudo dkms remove omenctl-hp-wmi/0.2.9 --all && sudo rmmod hp_wmi && sudo modprobe hp_wmi`
+Rollback: `sudo dkms remove omenctl-hp-wmi/0.3.0 --all && sudo rmmod hp_wmi && sudo modprobe hp_wmi`
 (loads the stock module again).
 
 ## 4. Start the service in Balanced
@@ -305,6 +305,44 @@ sudo reboot && modinfo -n hp_wmi    # stock path (kernel/drivers/platform/x86/hp
 
 Expected: no service, no DKMS module, NVIDIA units as recorded, stock driver after reboot.
 Then reinstall for daily use.
+
+## 18. Charge control (driver property)
+
+Battery below 95 % and charging on AC (unplug both the barrel adapter and USB-C for a
+while first). The service's charge limit stays off (`omenctl charge off`) for this test.
+
+```bash
+cat /sys/class/power_supply/BAT0/charge_behaviour   # [auto] inhibit-charge force-discharge
+echo inhibit-charge | sudo tee /sys/class/power_supply/BAT0/charge_behaviour
+sleep 15; cat /sys/class/power_supply/BAT0/{status,power_now}   # Not charging, ~0
+echo auto | sudo tee /sys/class/power_supply/BAT0/charge_behaviour
+sleep 15; cat /sys/class/power_supply/BAT0/{status,power_now}   # Charging, > 0
+```
+
+Expected: each write returns at once; the status follows within seconds. If a write does
+not return, the EC did not acknowledge (`SBCO` waits for it); reboot and leave the charge
+limit off. Rollback: `echo auto` as above.
+
+## 19. Charge limit through the service
+
+```bash
+omenctl charge 60 55; omenctl status | grep -i charge   # holding (at or above 60 %) or charging
+journalctl -u omenctld -b | grep "charge limit"
+```
+
+Unplug: `charge_behaviour` goes back to `[auto]` and the state shows `discharging`. Plug in
+below 55 %: it charges to 60 % and holds. `sudo systemctl stop omenctld` writes `auto`.
+
+## 20. Lid close
+
+```bash
+omenctl lid ignore-on-ac
+systemd-inhibit --list | grep omenctl                   # handle-lid-switch, block
+```
+
+Close the lid for a minute while plugged in (watch from another device, e.g. the web
+monitor or `ping`): the laptop keeps running. Unplug with the lid open: the lock goes away.
+`omenctl lid suspend` restores the desktop default.
 
 ---
 

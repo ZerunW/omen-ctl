@@ -1,0 +1,12 @@
+[package]
+name = "omenctl-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+omenctl-core = { path = "../omenctl-core" }
+serde.workspace = true
+serde_json.workspace = true
+nvml-wrapper = "0.11"
+libc = "0.2"

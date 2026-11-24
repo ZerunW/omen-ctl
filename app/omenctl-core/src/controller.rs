@@ -8,10 +8,10 @@
 //!   moves towards more cooling and less power. If fan writes fail, the kernel
 //!   watchdog is deliberately NOT kicked so the driver forces max fans itself.
 
-use crate::config::Config;
+use crate::config::{BatteryConfig, Config, LidAction};
 use crate::curve::{level_to_pwm, FanCurve, Smoother, LEVEL_MAX, LEVEL_MIN};
-use crate::hw::{Hw, Sensors, PWM_AUTO, PWM_MANUAL};
-use crate::proto::Status;
+use crate::hw::{BatteryStatus, ChargeBehaviour, Hw, Sensors, PWM_AUTO, PWM_MANUAL};
+use crate::proto::{ChargeState, ChargeStatus, LidStatus, Status};
 use crate::{FanMode, Mode};
 
 /// Grace period after a fan target change before rpm is checked (fans take ~10 s to ramp).
@@ -22,6 +22,39 @@ const GPU_BUSY_W: f32 = 50.0;
 const GPU_ENGAGE_S: f64 = 3.0;
 const GPU_IDLE_W: f32 = 30.0;
 const GPU_RELEASE_S: f64 = 15.0;
+const CHARGE_READ_S: f64 = 30.0;
+const CHARGE_RETRY_S: f64 = 60.0;
+const CHARGE_FIRMWARE_GRACE_S: f64 = 60.0;
+const CHARGE_FIRMWARE_RETRY_S: f64 = 300.0;
+
+#[derive(Default)]
+struct ChargeControl {
+    current: Option<String>,
+    wanted: ChargeBehaviour,
+    full_once: bool,
+    read_at: Option<f64>,
+    external_change: bool,
+    external_write_at: Option<f64>,
+    charging_since: Option<f64>,
+    firmware_write_at: Option<f64>,
+    write_error: Option<ChargeWriteError>,
+}
+
+struct ChargeWriteError {
+    at: f64,
+    message: String,
+    firmware: bool,
+    /// The value that failed; a different wanted value is written at once.
+    behaviour: ChargeBehaviour,
+}
+
+pub fn lid_should_ignore(close: LidAction, ac: Option<bool>) -> bool {
+    match close {
+        LidAction::Suspend => false,
+        LidAction::IgnoreOnAc => ac == Some(true),
+        LidAction::Ignore => true,
+    }
+}
 
 pub struct Controller<H: Hw> {
     pub hw: H,
@@ -57,6 +90,8 @@ pub struct Controller<H: Hw> {
     gpu_idle_since: Option<f64>,
     /// GPU priority active: the RAPL PL1/PL2 to restore when it ends.
     gpu_priority: Option<(u32, u32)>,
+    charge: ChargeControl,
+    system_stopping: bool,
 }
 
 impl<H: Hw> Controller<H> {
@@ -91,6 +126,8 @@ impl<H: Hw> Controller<H> {
             gpu_busy_since: None,
             gpu_idle_since: None,
             gpu_priority: None,
+            charge: ChargeControl::default(),
+            system_stopping: false,
         }
     }
 
@@ -352,6 +389,139 @@ impl<H: Hw> Controller<H> {
         self.last_ac = self.last_sensors.ac_online;
         let m = self.user_mode;
         self.apply_mode(m, now);
+        self.update_charge(now);
+    }
+
+    pub fn set_charge(&mut self, battery: BatteryConfig, now: f64) -> Result<(), String> {
+        let mut cfg = self.cfg.clone();
+        cfg.battery = battery;
+        self.cfg = cfg.validated()?;
+        self.update_charge(now);
+        Ok(())
+    }
+
+    pub fn charge_full_once(&mut self, on: bool, now: f64) {
+        self.charge.full_once = on;
+        self.update_charge(now);
+    }
+
+    pub fn set_lid(&mut self, close: LidAction) {
+        self.cfg.lid.close = close;
+    }
+
+    fn update_charge(&mut self, now: f64) {
+        use ChargeBehaviour::{Auto, Inhibit};
+
+        let c = &mut self.charge;
+        if c.read_at.is_none_or(|t| now - t >= CHARGE_READ_S) {
+            let current = self.hw.charge_behaviour();
+            if c.current.is_none() {
+                c.wanted = if current.as_deref() == Some(Inhibit.as_str()) { Inhibit } else { Auto };
+            } else if current.is_some() && current != c.current {
+                c.external_change = true;
+            }
+            c.current = current;
+            c.read_at = Some(now);
+        }
+
+        let s = self.last_sensors;
+        let BatteryConfig { charge_limit: limit, charge_resume: resume } = self.cfg.battery;
+        let on_ac = s.ac_online == Some(true);
+        if s.ac_online == Some(false) || s.battery_percent == Some(100) || s.battery_status == Some(BatteryStatus::Full) {
+            c.full_once = false;
+        }
+        let Some(current) = c.current.as_deref() else {
+            c.charging_since = None;
+            c.external_change = false;
+            return;
+        };
+
+        let wanted = if limit == 0 || c.full_once || !on_ac {
+            Auto
+        } else {
+            match (c.wanted, s.battery_percent) {
+                (Inhibit, Some(level)) if level <= resume => Auto,
+                (Auto, Some(level)) if level >= limit => Inhibit,
+                (wanted, _) => wanted,
+            }
+        };
+        if wanted != c.wanted {
+            c.wanted = wanted;
+            c.external_change = false;
+            let level = s.battery_percent.map_or_else(|| "battery".into(), |n| format!("battery {n}%"));
+            let event = match wanted {
+                Inhibit => format!("{level} on AC: charging inhibited (limit {limit}%)"),
+                Auto if !on_ac => format!("{level}: charging inhibition cleared (AC unavailable)"),
+                Auto if limit == 0 => format!("{level}: charging again (limit off)"),
+                Auto if c.full_once => format!("{level}: charging to full once"),
+                Auto => format!("{level}: charging again (resume at {resume}%)"),
+            };
+            self.events.push(format!("charge limit: {event}"));
+        }
+
+        if wanted == Inhibit && s.battery_status == Some(BatteryStatus::Charging) {
+            c.charging_since.get_or_insert(now);
+        } else {
+            c.charging_since = None;
+        }
+        let differs = current != wanted.as_str();
+        let firmware = !differs && c.charging_since.is_some_and(|t| now - t > CHARGE_FIRMWARE_GRACE_S)
+            && c.firmware_write_at.is_none_or(|t| now - t >= CHARGE_FIRMWARE_RETRY_S);
+        if !differs {
+            c.external_change = false;
+            if !firmware || c.write_error.as_ref().is_some_and(|e| !e.firmware) {
+                c.write_error = None;
+            }
+        }
+        if c.write_error.as_ref().is_some_and(|e| now - e.at < CHARGE_RETRY_S && e.behaviour == wanted) {
+            return;
+        }
+
+        if differs {
+            if c.external_change {
+                if c.external_write_at.is_some_and(|t| now - t < CHARGE_READ_S) {
+                    return;
+                }
+                c.external_write_at = Some(now);
+                self.events.push(format!("charge limit: kernel behaviour changed to {current}, reapplying {}", wanted.as_str()));
+            }
+        } else if firmware {
+            if c.write_error.is_none() {
+                self.events.push("WARNING: charge limit: battery still charging, reapplying inhibit-charge".into());
+            }
+        } else {
+            return;
+        }
+
+        match self.hw.set_charge_behaviour(wanted) {
+            Ok(()) => {
+                c.current = Some(wanted.as_str().into());
+                c.external_change = false;
+                c.write_error = None;
+                if firmware {
+                    c.firmware_write_at = Some(now);
+                }
+            }
+            Err(e) => {
+                c.write_error = Some(ChargeWriteError { at: now, message: format!("charge limit: {e}"), firmware, behaviour: wanted })
+            }
+        }
+    }
+
+    fn charge_status(&self) -> ChargeStatus {
+        let BatteryConfig { charge_limit: limit, charge_resume: resume } = self.cfg.battery;
+        let state = if self.charge.current.is_none() {
+            ChargeState::Unavailable
+        } else if limit == 0 {
+            ChargeState::Off
+        } else if self.last_sensors.ac_online != Some(true) {
+            ChargeState::Discharging
+        } else if self.charge.wanted == ChargeBehaviour::Inhibit {
+            ChargeState::Holding
+        } else {
+            ChargeState::Charging
+        };
+        ChargeStatus { limit, resume, state, full_once: self.charge.full_once }
     }
 
     pub fn set_mode(&mut self, mode: Mode, now: f64) {
@@ -456,6 +626,7 @@ impl<H: Hw> Controller<H> {
         self.errors.clear();
         let s = self.hw.sensors();
         self.last_sensors = s;
+        self.update_charge(now);
         self.record_temp(&s, now);
         let t = Self::temp(&s);
         let p = self.cfg.protect.clone();
@@ -605,6 +776,9 @@ impl<H: Hw> Controller<H> {
     pub fn status(&self) -> Status {
         let s = &self.last_sensors;
         let mut alerts = self.errors.clone();
+        if let Some(error) = &self.charge.write_error {
+            alerts.push(error.message.clone());
+        }
         let rec = self.recommended();
         if let FanMode::Fixed(l) = self.fan_mode {
             if l < rec[0] || l < rec[1] {
@@ -645,12 +819,28 @@ impl<H: Hw> Controller<H> {
             power: Default::default(),
             alerts,
             gpu_priority_w: self.gpu_priority.map(|_| self.cfg.cpu.gpu_priority_pl1),
+            charge: Some(self.charge_status()),
+            lid: Some(LidStatus { close: self.cfg.lid.close, inhibited: false }),
         }
     }
 
     /// Safe exit: max fans if hot, balanced profile, then hand fans back to BIOS
     /// (the patched driver holds the current speed until the EC takes over).
+    /// The whole system is powering off or rebooting: keep a held charge limit in
+    /// place (the firmware retains inhibit-charge while the laptop is off) instead of
+    /// restoring normal charging, which would charge to 100 % overnight.
+    pub fn set_system_stopping(&mut self, stopping: bool) {
+        self.system_stopping = stopping;
+    }
+
     pub fn shutdown(&mut self) {
+        if self.system_stopping && self.cfg.battery.charge_limit != 0 {
+            self.events.push("charge limit: system shutting down, inhibit-charge kept by the firmware".into());
+        } else if self.hw.charge_behaviour().as_deref() == Some(ChargeBehaviour::Inhibit.as_str()) {
+            if let Err(e) = self.hw.set_charge_behaviour(ChargeBehaviour::Auto) {
+                self.events.push(format!("charge limit: {e}"));
+            }
+        }
         self.end_gpu_priority("service stopping");
         let s = self.hw.sensors();
         if Self::temp(&s).map_or(true, |t| t >= self.cfg.protect.restore_below) {
@@ -681,6 +871,9 @@ mod tests {
         fail_pwm: bool,
         epp: String,
         rapl: (u32, u32),
+        charge: Option<String>,
+        charge_writes: Vec<ChargeBehaviour>,
+        fail_charge: bool,
     }
 
     impl Mock {
@@ -692,6 +885,7 @@ mod tests {
                     fan_rpm: [Some(2600), Some(2400)],
                     ac_online: Some(true),
                     battery_percent: Some(80),
+                    battery_status: None,
                     cpu_busy_max: Some(0.02),
                 },
                 profile: "balanced".into(),
@@ -713,6 +907,17 @@ mod tests {
     impl Hw for Mock {
         fn sensors(&mut self) -> Sensors {
             self.s
+        }
+        fn charge_behaviour(&self) -> Option<String> {
+            self.charge.clone()
+        }
+        fn set_charge_behaviour(&mut self, behaviour: ChargeBehaviour) -> io::Result<()> {
+            self.charge_writes.push(behaviour);
+            if self.fail_charge {
+                return Err(io::Error::other("charge write failed"));
+            }
+            self.charge = Some(behaviour.as_str().into());
+            Ok(())
         }
         fn platform_profile(&self) -> io::Result<String> {
             Ok(self.profile.clone())
@@ -773,6 +978,219 @@ mod tests {
 
     fn pos(log: &[String], what: &str) -> usize {
         log.iter().position(|l| l.starts_with(what)).unwrap_or_else(|| panic!("{what} not in {log:?}"))
+    }
+
+    const LIMIT: BatteryConfig = BatteryConfig { charge_limit: 60, charge_resume: 55 };
+
+    fn charge_ctl(level: u8, initial: Option<ChargeBehaviour>) -> Controller<Mock> {
+        let mut hw = Mock::new(55.0);
+        hw.s.battery_percent = Some(level);
+        hw.charge = initial.map(|b| b.as_str().into());
+        let mut cfg = Config::default();
+        cfg.battery = LIMIT;
+        let mut c = Controller::new(hw, cfg.validated().unwrap(), Mode::Balanced, FanMode::Auto);
+        c.start(0.0);
+        c
+    }
+
+    #[test]
+    fn charge_hysteresis_on_ac() {
+        use ChargeBehaviour::{Auto, Inhibit};
+        use ChargeState::{Charging, Holding};
+
+        let mut c = charge_ctl(56, Some(Auto));
+        for (i, (level, state)) in [
+            (Some(59), Charging), (Some(60), Holding), (Some(63), Holding),
+            (None, Holding), (Some(56), Holding), (Some(55), Charging),
+            (Some(56), Charging), (None, Charging), (Some(60), Holding),
+        ].into_iter().enumerate() {
+            c.hw.s.battery_percent = level;
+            assert_eq!(c.tick(i as f64 + 1.0).charge.unwrap().state, state, "level {level:?}");
+        }
+        assert_eq!(c.hw.charge_writes, [Inhibit, Auto, Inhibit]);
+    }
+
+    #[test]
+    fn charge_unplug_or_unknown_source_clears_hold() {
+        use ChargeBehaviour::{Auto, Inhibit};
+        for ac in [Some(false), None] {
+            let mut c = charge_ctl(60, Some(Auto));
+            c.hw.s.ac_online = ac;
+            c.hw.s.battery_percent = None;
+            assert_eq!(c.tick(1.0).charge.unwrap().state, ChargeState::Discharging);
+            assert_eq!(c.hw.charge_writes, [Inhibit, Auto]);
+        }
+    }
+
+    #[test]
+    fn charge_limit_off_clears_hold_immediately() {
+        use ChargeBehaviour::{Auto, Inhibit};
+        let mut c = charge_ctl(60, Some(Auto));
+        c.set_charge(BatteryConfig::default(), 1.0).unwrap();
+        assert_eq!(c.status().charge.unwrap().state, ChargeState::Off);
+        assert_eq!(c.hw.charge_writes, [Inhibit, Auto]);
+    }
+
+    #[test]
+    fn full_once_ends_on_unplug_or_full() {
+        use ChargeBehaviour::{Auto, Inhibit};
+        use ChargeState::{Charging, Discharging, Holding};
+
+        for (ac, level, battery_status, state) in [
+            (Some(false), 70, None, Discharging),
+            (Some(true), 100, None, Holding),
+            (Some(true), 95, Some(BatteryStatus::Full), Holding),
+        ] {
+            let mut c = charge_ctl(70, Some(Inhibit));
+            c.charge_full_once(true, 1.0);
+            let charge = c.tick(2.0).charge.unwrap();
+            assert_eq!(charge.state, Charging);
+            assert!(charge.full_once);
+            assert_eq!(c.hw.charge_writes, [Auto]);
+            c.hw.s.ac_online = ac;
+            c.hw.s.battery_percent = Some(level);
+            c.hw.s.battery_status = battery_status;
+            let charge = c.tick(3.0).charge.unwrap();
+            assert_eq!(charge.state, state);
+            assert!(!charge.full_once);
+            if state == Holding {
+                assert_eq!(c.hw.charge_writes, [Auto, Inhibit]);
+            } else {
+                assert_eq!(c.hw.charge_writes, [Auto]);
+            }
+        }
+    }
+
+    #[test]
+    fn charge_unavailable_never_writes() {
+        let mut c = charge_ctl(70, None);
+        assert_eq!(c.tick(30.0).charge.unwrap().state, ChargeState::Unavailable);
+        c.charge_full_once(true, 31.0);
+        c.shutdown();
+        assert!(c.hw.charge_writes.is_empty());
+    }
+
+    #[test]
+    fn charge_preserves_startup_hold_and_releases_on_shutdown() {
+        use ChargeBehaviour::{Auto, Inhibit};
+        let mut c = charge_ctl(58, Some(Inhibit));
+        assert_eq!(c.status().charge.unwrap().state, ChargeState::Holding);
+        assert!(c.hw.charge_writes.is_empty());
+        c.shutdown();
+        assert_eq!(c.hw.charge_writes, [Auto]);
+    }
+
+    #[test]
+    fn charge_hold_kept_when_the_system_powers_off() {
+        use ChargeBehaviour::Inhibit;
+        let mut c = charge_ctl(60, Some(Inhibit));
+        c.set_system_stopping(true);
+        c.shutdown();
+        assert!(c.hw.charge_writes.is_empty(), "the firmware keeps the limit while off");
+    }
+
+    #[test]
+    fn charge_failed_inhibit_retry_does_not_delay_auto() {
+        use ChargeBehaviour::{Auto, Inhibit};
+        // Holding, but the battery keeps charging: the firmware re-write of inhibit fails.
+        let mut c = charge_ctl(60, Some(Inhibit));
+        c.hw.s.battery_status = Some(BatteryStatus::Charging);
+        c.hw.fail_charge = true;
+        c.tick(1.0);
+        c.tick(62.0);
+        assert_eq!(c.hw.charge_writes, [Inhibit]);
+        assert!(c.status().alerts.iter().any(|a| a.starts_with("charge limit:")));
+        // Unplugged right after: auto is written at once, not after the retry delay.
+        c.hw.fail_charge = false;
+        c.hw.s.battery_status = None;
+        c.hw.s.ac_online = Some(false);
+        c.tick(63.0);
+        assert_eq!(c.hw.charge_writes, [Inhibit, Auto]);
+    }
+
+    #[test]
+    fn charge_reapplies_external_changes_on_periodic_read() {
+        use ChargeBehaviour::{Auto, Inhibit};
+        let mut c = charge_ctl(58, Some(Inhibit));
+        c.hw.charge = Some(Auto.as_str().into());
+        c.tick(29.0);
+        assert!(c.hw.charge_writes.is_empty());
+        c.tick(30.0);
+        assert_eq!(c.hw.charge_writes, [Inhibit]);
+        assert!(c.take_events().iter().any(|e| e.contains("kernel behaviour changed")));
+        c.hw.charge = Some("force-discharge".into());
+        c.tick(59.0);
+        assert_eq!(c.hw.charge_writes, [Inhibit]);
+        c.tick(60.0);
+        assert_eq!(c.hw.charge_writes, [Inhibit, Inhibit]);
+    }
+
+    #[test]
+    fn charge_write_error_alerts_and_retries() {
+        use ChargeBehaviour::{Auto, Inhibit};
+        let mut c = charge_ctl(59, Some(Auto));
+        c.hw.fail_charge = true;
+        c.hw.s.battery_percent = Some(60);
+        assert!(c.tick(1.0).alerts.iter().any(|a| a == "charge limit: charge write failed"));
+        c.hw.fail_charge = false;
+        assert!(c.tick(60.0).alerts.iter().any(|a| a.starts_with("charge limit: ")));
+        assert_eq!(c.hw.charge_writes, [Inhibit]);
+        assert!(!c.tick(61.0).alerts.iter().any(|a| a.starts_with("charge limit: ")));
+        assert_eq!(c.hw.charge_writes, [Inhibit, Inhibit]);
+    }
+
+    #[test]
+    fn charge_reapplies_inhibit_if_firmware_keeps_charging() {
+        use ChargeBehaviour::Inhibit;
+        let mut c = charge_ctl(60, Some(Inhibit));
+        c.hw.s.battery_status = Some(BatteryStatus::Charging);
+        c.tick(1.0);
+        c.tick(61.0);
+        assert!(c.hw.charge_writes.is_empty());
+        c.tick(62.0);
+        assert_eq!(c.hw.charge_writes, [Inhibit]);
+        assert!(c.take_events().iter().any(|e| e.contains("battery still charging")));
+        c.tick(361.0);
+        assert_eq!(c.hw.charge_writes, [Inhibit]);
+        c.tick(362.0);
+        assert_eq!(c.hw.charge_writes, [Inhibit, Inhibit]);
+    }
+
+    #[test]
+    fn charge_retries_failed_firmware_write_after_backoff() {
+        use ChargeBehaviour::Inhibit;
+        let mut c = charge_ctl(60, Some(Inhibit));
+        c.hw.s.battery_status = Some(BatteryStatus::Charging);
+        c.tick(1.0);
+        c.hw.fail_charge = true;
+        assert!(c.tick(62.0).alerts.iter().any(|a| a.starts_with("charge limit: ")));
+        c.hw.fail_charge = false;
+        c.tick(121.0);
+        assert_eq!(c.hw.charge_writes, [Inhibit]);
+        assert!(!c.tick(122.0).alerts.iter().any(|a| a.starts_with("charge limit: ")));
+        assert_eq!(c.hw.charge_writes, [Inhibit, Inhibit]);
+    }
+
+    #[test]
+    fn charge_rejects_invalid_settings_without_writing() {
+        let mut c = charge_ctl(60, Some(ChargeBehaviour::Inhibit));
+        let before = c.status().charge;
+        for (charge_limit, charge_resume) in [(49, 45), (101, 90), (60, 60), (60, 39), (0, 100)] {
+            assert!(c.set_charge(BatteryConfig { charge_limit, charge_resume }, 1.0).is_err());
+        }
+        assert_eq!(c.status().charge, before);
+        assert!(c.hw.charge_writes.is_empty());
+    }
+
+    #[test]
+    fn lid_decision_for_all_power_sources() {
+        for (action, expected) in [
+            (LidAction::Suspend, [false, false, false]),
+            (LidAction::IgnoreOnAc, [true, false, false]),
+            (LidAction::Ignore, [true, true, true]),
+        ] {
+            assert_eq!([Some(true), Some(false), None].map(|ac| lid_should_ignore(action, ac)), expected);
+        }
     }
 
     #[test]

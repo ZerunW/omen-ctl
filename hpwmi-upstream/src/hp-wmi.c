@@ -639,6 +639,17 @@ static const struct dmi_system_id hp_wmi_charge_control_quirks[] __initconst = {
 			DMI_MATCH(DMI_BOARD_NAME, "8C15"),
 		},
 	},
+	{
+		/*
+		 * omenctl addition: HP OMEN 16-am0xxx. Its DSDT has the same
+		 * GBCO/SBCO methods (SBCO 5 -> EC BDVO 0x45 inhibit, 0 -> 0x40
+		 * auto; GBCO reports 0x04 while inhibited).
+		 */
+		.matches = {
+			DMI_MATCH(DMI_BOARD_VENDOR, "HP"),
+			DMI_MATCH(DMI_BOARD_NAME, "8D3F"),
+		},
+	},
 	{}
 };
 #endif

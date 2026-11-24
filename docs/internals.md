@@ -157,6 +157,12 @@ them for about two minutes. These are the reasons for the safety layers in secti
    sends `0x10`.
 5. Adds `omenctl_adapter_w` (read-only, 8D3F only): rated adapter power from query
    `0x0F`, printed in watts; `-ENODATA` without an adapter.
+6. Adds board 8D3F to the mainline charge control quirk list, which registers the
+   standard `charge_behaviour` battery property (`auto`, `inhibit-charge`,
+   `force-discharge`). Mainline writes BIOS command `0x2B` with the mode in byte 1 and
+   reads it back through `0x2B`. In this BIOS, `SBCO` (write) sets EC `BDVO` to `0x40`
+   for auto and `0x45` for inhibit, then waits for the EC to set bit 7; `GBCO` (read)
+   reports `0x04` while `BDVO` is `0xC5`. omenctld only writes `auto` and `inhibit-charge`.
 
 Every addition checks `DMI_BOARD_NAME == "8D3F"` and is a no-op elsewhere. The DKMS
 config ([`packaging/dkms/dkms.conf`](../packaging/dkms/dkms.conf)) builds the module

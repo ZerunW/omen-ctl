@@ -9,6 +9,15 @@
 # Never touch a machine the daemon was not allowed to run on (ExecCondition skip).
 /usr/lib/omenctl/omenctl-check 2>/dev/null || exit 0
 
+# Charge limit: normal charging again after any stop (the daemon normally does this
+# itself; this covers a crash or a failed write), except when the whole system is
+# powering off: then the firmware keeps the limit while the laptop is off.
+bat=/sys/class/power_supply/BAT0/charge_behaviour
+if [ "$(systemctl is-system-running 2>/dev/null)" != "stopping" ] &&
+	grep -q "\[inhibit-charge\]" "$bat" 2>/dev/null; then
+	echo auto > "$bat" 2>/dev/null || echo "omenctl-safe-exit: cannot restore normal charging" >&2
+fi
+
 if [ "$SERVICE_RESULT" = "success" ] && [ "${EXIT_STATUS:-0}" = "0" ]; then
 	exit 0
 fi

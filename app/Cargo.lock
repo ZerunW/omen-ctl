@@ -1636,7 +1636,7 @@ dependencies = [
 
 [[package]]
 name = "omenctl"
-version = "0.2.9"
+version = "0.3.0"
 dependencies = [
  "omenctl-core",
  "serde_json",
@@ -1644,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "omenctl-core"
-version = "0.2.9"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1654,15 +1654,26 @@ dependencies = [
 
 [[package]]
 name = "omenctl-gui"
-version = "0.2.9"
+version = "0.3.0"
 dependencies = [
  "eframe",
  "omenctl-core",
 ]
 
 [[package]]
+name = "omenctl-web"
+version = "0.3.0"
+dependencies = [
+ "libc",
+ "nvml-wrapper",
+ "omenctl-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "omenctld"
-version = "0.2.9"
+version = "0.3.0"
 dependencies = [
  "libc",
  "nvml-wrapper",

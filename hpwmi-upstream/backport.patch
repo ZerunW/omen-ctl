@@ -1,5 +1,5 @@
 --- hp-wmi-upstream-e931e54.c	2026-11-08 12:58:59.777690466 -0500
-+++ src/hp-wmi.c	2026-11-08 16:58:21.203051593 -0500
++++ src/hp-wmi.c	2026-11-23 18:39:27.523674439 -0500
 @@ -43,6 +43,11 @@
  
  #include <acpi/battery.h>
@@ -12,7 +12,25 @@
  MODULE_AUTHOR("Matthew Garrett <mjg59@srcf.ucam.org>");
  MODULE_DESCRIPTION("HP laptop WMI driver");
  MODULE_LICENSE("GPL");
-@@ -658,8 +663,30 @@
+@@ -634,6 +639,17 @@
+ 			DMI_MATCH(DMI_BOARD_NAME, "8C15"),
+ 		},
+ 	},
++	{
++		/*
++		 * omenctl addition: HP OMEN 16-am0xxx. Its DSDT has the same
++		 * GBCO/SBCO methods (SBCO 5 -> EC BDVO 0x45 inhibit, 0 -> 0x40
++		 * auto; GBCO reports 0x04 while inhibited).
++		 */
++		.matches = {
++			DMI_MATCH(DMI_BOARD_VENDOR, "HP"),
++			DMI_MATCH(DMI_BOARD_NAME, "8D3F"),
++		},
++	},
+ 	{}
+ };
+ #endif
+@@ -658,8 +674,30 @@
  	u8 cpu_pwm;
  	u8 gpu_pwm;
  	struct delayed_work keep_alive_dwork;
@@ -43,7 +61,7 @@
  struct victus_s_fan_table_header {
  	u8 num_fans;
  	u8 unknown;
-@@ -1592,6 +1619,108 @@
+@@ -1592,6 +1630,108 @@
  	return count;
  }
  
@@ -152,7 +170,7 @@
  static DEVICE_ATTR_RO(display);
  static DEVICE_ATTR_RO(hddtemp);
  static DEVICE_ATTR_RW(als);
-@@ -1599,6 +1728,9 @@
+@@ -1599,6 +1739,9 @@
  static DEVICE_ATTR_RO(tablet);
  static DEVICE_ATTR_RW(postcode);
  static DEVICE_ATTR_RW(gpu_mux_mode);
@@ -162,7 +180,7 @@
  
  static struct attribute *hp_wmi_attrs[] = {
  	&dev_attr_display.attr,
-@@ -1608,6 +1740,9 @@
+@@ -1608,6 +1751,9 @@
  	&dev_attr_tablet.attr,
  	&dev_attr_postcode.attr,
  	&dev_attr_gpu_mux_mode.attr,
@@ -172,7 +190,7 @@
  	NULL,
  };
  ATTRIBUTE_GROUPS(hp_wmi);
-@@ -2291,6 +2426,37 @@
+@@ -2291,6 +2437,37 @@
  	return params->get_fan_speed(fan);
  }
  
@@ -210,7 +228,7 @@
  static int victus_s_gpu_thermal_profile_get(bool *ctgp_enable,
  					    bool *ppab_enable,
  					    u8 *dstate,
-@@ -2477,6 +2643,24 @@
+@@ -2477,6 +2654,24 @@
  		return err;
  	}
  
@@ -235,7 +253,7 @@
  	return 0;
  }
  
-@@ -2929,7 +3113,9 @@
+@@ -2929,7 +3124,9 @@
  				 secs_to_jiffies(KEEP_ALIVE_DELAY_SECS));
  		return 0;
  	case PWM_MODE_AUTO:
@@ -246,7 +264,7 @@
  			ret = hp_wmi_get_fan_count_userdefine_trigger();
  			if (ret < 0)
  				return ret;
-@@ -3120,6 +3306,37 @@
+@@ -3120,6 +3317,37 @@
  				    ret);
  }
  
@@ -284,7 +302,7 @@
  static int hp_wmi_setup_fan_settings(struct hp_wmi_hwmon_priv *priv)
  {
  	u8 fan_data[128] = { 0 };
-@@ -3208,6 +3425,11 @@
+@@ -3208,6 +3436,11 @@
  	if (ret)
  		return ret;
  
@@ -296,7 +314,7 @@
  	hwmon = devm_hwmon_device_register_with_info(dev, "hp", priv,
  						     &chip_info, NULL);
  
-@@ -3225,6 +3447,15 @@
+@@ -3225,6 +3458,15 @@
  	if (ret)
  		dev_warn(dev, "Failed to apply initial fan settings: %d\n", ret);
  

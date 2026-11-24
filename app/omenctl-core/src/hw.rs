@@ -5,9 +5,35 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 
 pub const PWM_MANUAL: u8 = 1;
 pub const PWM_AUTO: u8 = 2;
+
+const CHARGE_BEHAVIOUR: &str = "sys/class/power_supply/BAT0/charge_behaviour";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ChargeBehaviour {
+    #[default]
+    Auto,
+    Inhibit,
+}
+
+impl ChargeBehaviour {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Inhibit => "inhibit-charge",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatteryStatus {
+    Charging,
+    Full,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Sensors {
@@ -19,6 +45,7 @@ pub struct Sensors {
     pub ac_online: Option<bool>,
     /// Laptop battery charge (%).
     pub battery_percent: Option<u8>,
+    pub battery_status: Option<BatteryStatus>,
     /// Busy share (0..1) of the busiest logical CPU since the previous reading.
     pub cpu_busy_max: Option<f32>,
 }
@@ -41,6 +68,9 @@ pub trait Hw {
     fn cpu_epp(&self) -> io::Result<String>;
     /// Set the EPP on every CPU.
     fn set_cpu_epp(&mut self, epp: &str) -> io::Result<()>;
+    /// Current kernel value, or None if charge inhibition is unavailable.
+    fn charge_behaviour(&self) -> Option<String>;
+    fn set_charge_behaviour(&mut self, behaviour: ChargeBehaviour) -> io::Result<()>;
 }
 
 /// Paths relative to a root (normally "/").
@@ -49,11 +79,19 @@ pub struct SysfsHw {
     gpu: Option<Box<dyn FnMut() -> Option<f32> + Send>>,
     /// Per-CPU (busy, total) jiffies from the previous /proc/stat reading.
     prev_stat: Vec<(u64, u64)>,
+    /// charge_behaviour write still running (started at, value). The firmware method
+    /// behind it waits in a loop for the EC to acknowledge, so a write that never
+    /// returns must not hold up the control loop.
+    charge_pending: Arc<Mutex<Option<(Instant, ChargeBehaviour)>>>,
 }
+
+/// How long a charge_behaviour write may block the caller before it is left to
+/// finish in the background.
+const CHARGE_WRITE_WAIT: Duration = Duration::from_secs(2);
 
 impl SysfsHw {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        SysfsHw { root: root.into(), gpu: None, prev_stat: Vec::new() }
+        SysfsHw { root: root.into(), gpu: None, prev_stat: Vec::new(), charge_pending: Arc::new(Mutex::new(None)) }
     }
 
     /// Install a GPU temperature reader (e.g. NVML). It is only called while the
@@ -147,9 +185,61 @@ impl Hw for SysfsHw {
             }
         }
         let ac_online = read_trim(&self.p("sys/class/power_supply/ADP1/online")).ok().map(|s| s == "1");
-        let battery_percent = crate::power::battery_percent(&self.root);
+        let battery = crate::power::read(&self.root).battery;
+        let battery_percent = battery.as_ref().and_then(|b| b.percent);
+        let battery_status = match battery.as_ref().map(|b| b.status.as_str()) {
+            Some("Charging") => Some(BatteryStatus::Charging),
+            Some("Full") => Some(BatteryStatus::Full),
+            _ => None,
+        };
         let cpu_busy_max = self.busiest_cpu();
-        Sensors { cpu_temp, gpu_temp, fan_rpm, ac_online, battery_percent, cpu_busy_max }
+        Sensors { cpu_temp, gpu_temp, fan_rpm, ac_online, battery_percent, battery_status, cpu_busy_max }
+    }
+
+    fn charge_behaviour(&self) -> Option<String> {
+        let text = read_trim(&self.p(CHARGE_BEHAVIOUR)).ok()?;
+        let mut values = text.split_whitespace();
+        if !values.clone().any(|v| matches!(v, "inhibit-charge" | "[inhibit-charge]")) {
+            return None;
+        }
+        values.find_map(|v| v.strip_prefix('[')?.strip_suffix(']')).map(String::from)
+    }
+
+    fn set_charge_behaviour(&mut self, behaviour: ChargeBehaviour) -> io::Result<()> {
+        let path = self.p(CHARGE_BEHAVIOUR);
+        {
+            let mut pending = self.charge_pending.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((since, b)) = *pending {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("writing {} has not returned for {} s (firmware not answering)", b.as_str(), since.elapsed().as_secs()),
+                ));
+            }
+            *pending = Some((Instant::now(), behaviour));
+        }
+        let (tx, rx) = mpsc::channel();
+        let pending = self.charge_pending.clone();
+        let spawned = std::thread::Builder::new().name("charge-write".into()).spawn(move || {
+            let r = fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(&path)
+                .and_then(|mut f| std::io::Write::write_all(&mut f, behaviour.as_str().as_bytes()))
+                .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())));
+            *pending.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            let _ = tx.send(r);
+        });
+        if let Err(e) = spawned {
+            *self.charge_pending.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            return Err(e);
+        }
+        match rx.recv_timeout(CHARGE_WRITE_WAIT) {
+            Ok(r) => r,
+            Err(_) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("writing {} did not return within {} s (firmware not answering)", behaviour.as_str(), CHARGE_WRITE_WAIT.as_secs()),
+            )),
+        }
     }
 
     fn platform_profile(&self) -> io::Result<String> {
@@ -301,6 +391,31 @@ mod tests {
         assert_eq!(read_trim(&root.join("sys/devices/system/cpu/cpu1/cpufreq/energy_performance_preference")).unwrap(), "balance_performance");
         fs::write(root.join("sys/bus/pci/devices/0000:01:00.0/power/runtime_status"), "active").unwrap();
         assert_eq!(hw.sensors().gpu_temp, Some(70.0));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn reads_and_writes_charge_behaviour() {
+        let root = tree();
+        let mut hw = SysfsHw::new(&root);
+        let behaviour = root.join(CHARGE_BEHAVIOUR);
+        assert_eq!(hw.charge_behaviour(), None);
+        assert!(hw.set_charge_behaviour(ChargeBehaviour::Auto).is_err());
+        fs::create_dir_all(behaviour.parent().unwrap()).unwrap();
+        fs::write(&behaviour, "[auto] force-discharge\n").unwrap();
+        assert_eq!(hw.charge_behaviour(), None);
+        for (options, current) in [
+            ("[auto] inhibit-charge force-discharge\n", "auto"),
+            ("auto [inhibit-charge] force-discharge\n", "inhibit-charge"),
+            ("auto inhibit-charge [force-discharge]\n", "force-discharge"),
+        ] {
+            fs::write(&behaviour, options).unwrap();
+            assert_eq!(hw.charge_behaviour().as_deref(), Some(current));
+        }
+        hw.set_charge_behaviour(ChargeBehaviour::Inhibit).unwrap();
+        assert_eq!(read_trim(&behaviour).unwrap(), "inhibit-charge");
+        hw.set_charge_behaviour(ChargeBehaviour::Auto).unwrap();
+        assert_eq!(read_trim(&behaviour).unwrap(), "auto");
         fs::remove_dir_all(root).ok();
     }
 }

@@ -11,6 +11,7 @@ if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
 		systemctl stop omenctld.service 2>/dev/null || true
 		systemctl disable omenctld.service 2>/dev/null || true
 		systemctl disable --now omenctl-nvidia-powerd.service 2>/dev/null || true
+		systemctl disable --now omenctl-web.service 2>/dev/null || true
 		if [ -e "$RB/units" ]; then
 			while read -r u st; do
 				case "$st" in
@@ -20,6 +21,12 @@ if [ "$1" = "remove" ] || [ "$1" = "deconfigure" ]; then
 				esac
 			done < "$RB/units"
 		fi
+	fi
+	# Normal charging before the driver that provides the control goes away (the
+	# stopped service has normally done this already).
+	bat=/sys/class/power_supply/BAT0/charge_behaviour
+	if grep -q "\[inhibit-charge\]" "$bat" 2>/dev/null; then
+		echo auto > "$bat" 2>/dev/null || echo "omenctl: could not restore normal charging; run: echo auto | sudo tee $bat" >&2
 	fi
 	dkms remove -m omenctl-hp-wmi -v "$VERSION" --all 2>/dev/null || true
 	echo "omenctl: patched driver removed; the stock hp-wmi is used after the next reboot."

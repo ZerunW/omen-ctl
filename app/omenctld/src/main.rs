@@ -8,16 +8,18 @@
 
 mod files;
 mod gpu;
+mod lid;
 mod sdnotify;
 mod server;
 mod telemetry;
 
 use files::State;
+use omenctl_core::config::BatteryConfig;
 use omenctl_core::controller::Controller;
 use omenctl_core::hw::{Hw, SysfsHw};
 use omenctl_core::proto::{Request, Response, Status, SOCKET_PATH};
 use omenctl_core::FanMode;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::sync::Arc;
@@ -47,7 +49,8 @@ const USAGE: &str = "usage: omenctld [--config FILE] [--state FILE] [--socket PA
 
   --config FILE   configuration (default /etc/omenctl/config.toml)
   --state  FILE   saved mode / fan mode (default /var/lib/omenctl/state.json)
-  --socket PATH   control socket (default /run/omenctl.sock)
+  --socket PATH   control socket (default /run/omenctl.sock); a read-only status
+                  socket omenctl-status.sock is created in the same directory
   --group  NAME   group allowed to use the socket (default omenctl)
   --root   DIR    prefix for every /sys path (testing with a fake sysfs tree)
   --no-gpu        never load NVML";
@@ -89,6 +92,7 @@ struct Daemon<H: Hw> {
     saved: Option<State>,
     rapl: telemetry::RaplPower,
     gpu: Option<gpu::GpuMonitor>,
+    lid: lid::Lid,
     cpu_w: Option<f32>,
     root: PathBuf,
     power: omenctl_core::power::PowerInfo,
@@ -117,16 +121,33 @@ impl<H: Hw> Daemon<H> {
         s.cpu_power_w = self.cpu_w;
         s.gpu_power_w = self.gpu.as_ref().and_then(|g| g.power_w());
         s.power = self.power.clone();
+        if let Some(lid) = &mut s.lid {
+            lid.inhibited = self.lid.inhibited();
+        }
+        if let Some(alert) = self.lid.alert() {
+            s.alerts.push(alert.into());
+        }
         s
+    }
+
+    fn update_lid(&mut self, now: f64, status: &Status) {
+        if let Some(lid) = status.lid {
+            self.lid.update(now, lid.close, status.ac_online);
+        }
+    }
+
+    fn log_events(&mut self) {
+        for e in self.ctl.take_events() {
+            eprintln!("{e}");
+        }
     }
 
     fn tick(&mut self) -> Status {
         let now = self.now();
         self.ctl.set_gpu_power(self.gpu.as_ref().and_then(|g| g.power_w()));
         let st = self.ctl.tick(now);
-        for e in self.ctl.take_events() {
-            eprintln!("{e}");
-        }
+        self.update_lid(now, &st);
+        self.log_events();
         self.cpu_w = self.rapl.sample(now);
         let mut power = omenctl_core::power::read(&self.root);
         let stale = self.adapter.1.is_none_or(|t| now - t >= 60.0) || power.ac_online != self.power.ac_online;
@@ -135,6 +156,7 @@ impl<H: Hw> Daemon<H> {
         }
         power.adapter_w = self.adapter.0;
         self.power = power;
+        let st = self.fill(st);
         if st.alerts != self.last_alerts {
             for a in st.alerts.iter().filter(|a| !self.last_alerts.contains(a)) {
                 eprintln!("ALERT: {a}");
@@ -145,7 +167,7 @@ impl<H: Hw> Daemon<H> {
             self.last_alerts = st.alerts.clone();
         }
         self.persist(); // the controller may adopt an external profile change
-        self.fill(st)
+        st
     }
 
     fn handle(&mut self, req: Request) -> Response {
@@ -185,7 +207,28 @@ impl<H: Hw> Daemon<H> {
                 self.ctl.set_modes(modes);
                 return Response::Settings { modes };
             }
+            Request::SetCharge { limit, resume } => {
+                let battery = BatteryConfig { charge_limit: limit, charge_resume: resume };
+                if let Err(message) = files::save_battery(&self.config_path, &battery) {
+                    return Response::Error { message };
+                }
+                self.ctl.set_charge(battery, now)
+            }
+            Request::ChargeFullOnce { on } => {
+                self.ctl.charge_full_once(on, now);
+                Ok(())
+            }
+            Request::SetLid { close } => {
+                if let Err(message) = files::save_lid(&self.config_path, close) {
+                    return Response::Error { message: format!("cannot write the config file: {message}") };
+                }
+                self.ctl.set_lid(close);
+                let status = self.ctl.status();
+                self.update_lid(now, &status);
+                Ok(())
+            }
         };
+        self.log_events();
         self.persist();
         match resp {
             Ok(()) => Response::Ok { status: self.fill(self.ctl.status()) },
@@ -245,6 +288,7 @@ fn run() -> Result<(), String> {
         saved,
         rapl: telemetry::RaplPower::new(&args.root),
         gpu,
+        lid: lid::Lid::new(args.root == Path::new("/")),
         cpu_w: None,
         root: args.root.clone(),
         power: Default::default(),
@@ -252,13 +296,19 @@ fn run() -> Result<(), String> {
         last_alerts: Vec::new(),
         start: Instant::now(),
     };
+    let listener = server::bind(&args.socket, &args.group).map_err(|e| format!("{}: {e}", args.socket.display()))?;
     let now = d.now();
     d.ctl.start(now);
     d.persist();
 
-    let listener = server::bind(&args.socket, &args.group).map_err(|e| format!("{}: {e}", args.socket.display()))?;
     let (tx, rx) = channel::<server::Job>();
-    server::spawn(listener, tx);
+    // The read-only status socket sits next to the control socket.
+    let status_socket = args.socket.with_file_name(omenctl_core::proto::STATUS_SOCKET_NAME);
+    match server::bind_status(&status_socket) {
+        Ok(l) => server::spawn(l, tx.clone(), true),
+        Err(e) => eprintln!("status socket {}: {e} (the web monitor cannot read the status)", status_socket.display()),
+    }
+    server::spawn(listener, tx, false);
 
     d.tick();
     notifier.notify("READY=1");
@@ -277,10 +327,12 @@ fn run() -> Result<(), String> {
             Ok(job) => {
                 let r = d.handle(job.req);
                 let _ = job.reply.send(r);
-                continue;
             }
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return Err("socket thread died".into()),
+            Err(RecvTimeoutError::Disconnected) => {
+                failure = Some("socket thread died".into());
+                break;
+            }
         }
         if Instant::now() < next_tick {
             continue;
@@ -309,10 +361,22 @@ fn run() -> Result<(), String> {
 
     eprintln!("stopping: balanced profile, fans back to BIOS");
     notifier.notify("STOPPING=1");
+    d.lid.release();
+    d.ctl.set_system_stopping(args.root == Path::new("/") && system_stopping());
     d.ctl.shutdown();
+    d.log_events();
     let _ = std::fs::remove_file(&args.socket);
+    let _ = std::fs::remove_file(args.socket.with_file_name(omenctl_core::proto::STATUS_SOCKET_NAME));
     // An error exit makes systemd restart the service (Restart=on-failure).
     failure.map_or(Ok(()), Err)
+}
+
+/// True while the whole system is powering off or rebooting (not a plain service stop).
+fn system_stopping() -> bool {
+    std::process::Command::new("systemctl")
+        .arg("is-system-running")
+        .output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "stopping")
 }
 
 fn main() {

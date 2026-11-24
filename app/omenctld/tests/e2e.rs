@@ -1,12 +1,15 @@
 //! End-to-end test without hardware: run the real omenctld binary against a fake
 //! sysfs tree, drive it through the socket, check sd_notify and the safe exit.
 
+use omenctl_core::config::LidAction;
 use omenctl_core::curve::FanCurve;
-use omenctl_core::proto::{Client, Request, Response};
+use omenctl_core::proto::{ChargeState, Client, LidStatus, Request, Response};
 use omenctl_core::{FanMode, Mode};
 use std::os::unix::net::UnixDatagram;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+
+const CHARGE_BEHAVIOUR: &str = "sys/class/power_supply/BAT0/charge_behaviour";
 
 fn mk(root: &Path, rel: &str, v: &str) {
     let p = root.join(rel);
@@ -31,6 +34,9 @@ fn fake_tree(root: &Path) {
     mk(root, "sys/class/hwmon/hwmon9/name", "coretemp\n");
     mk(root, "sys/class/hwmon/hwmon9/temp1_input", "50000\n");
     mk(root, "sys/class/power_supply/ADP1/online", "1\n");
+    mk(root, "sys/class/power_supply/BAT0/type", "Battery\n");
+    mk(root, "sys/class/power_supply/BAT0/capacity", "60\n");
+    mk(root, CHARGE_BEHAVIOUR, "[auto] inhibit-charge force-discharge\n");
     mk(root, "sys/bus/pci/devices/0000:01:00.0/power/runtime_status", "suspended\n");
     mk(root, "sys/class/powercap/intel-rapl:0/energy_uj", "1000\n");
     mk(root, "sys/class/powercap/intel-rapl:0/max_energy_range_uj", "262143328850\n");
@@ -87,6 +93,15 @@ fn daemon_end_to_end_on_fake_sysfs() {
     assert_eq!(status.fan, FanMode::Curve);
     assert_eq!(status.cpu_temp, Some(50.0));
 
+    // read-only status socket next to it: open to everyone, Status only
+    let status_sock = dir.join(omenctl_core::proto::STATUS_SOCKET_NAME);
+    assert_eq!(std::fs::metadata(&status_sock).unwrap().permissions().mode() & 0o777, 0o666);
+    let mut ro = Client::connect(status_sock.to_str().unwrap()).unwrap();
+    assert!(matches!(ro.call(&Request::Status).unwrap(), Response::Ok { .. }));
+    let r = ro.call(&Request::SetMode { mode: Mode::PowerSaver }).unwrap();
+    assert!(matches!(r, Response::Error { ref message } if message.contains("read-only")), "{r:?}");
+    drop(ro);
+
     // Unleashed: fans manual, profile performance, 75 W written, kernel watchdog kicked
     let r = c.call(&Request::SetMode { mode: Mode::Unleashed }).unwrap();
     assert!(matches!(r, Response::Ok { .. }), "{r:?}");
@@ -125,6 +140,27 @@ fn daemon_end_to_end_on_fake_sysfs() {
     let text = std::fs::read_to_string(&config).unwrap();
     assert!(text.contains("# test config") && text.contains("[fan.cpu_curve]"), "{text}");
 
+    let r = c.call(&Request::SetCharge { limit: 60, resume: 60 }).unwrap();
+    assert!(matches!(r, Response::Error { .. }), "{r:?}");
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), text);
+    assert_eq!(read(&root, CHARGE_BEHAVIOUR), "[auto] inhibit-charge force-discharge");
+    let Response::Ok { status } = c.call(&Request::SetCharge { limit: 60, resume: 55 }).unwrap() else { panic!() };
+    assert_eq!(status.charge.unwrap().state, ChargeState::Holding);
+    assert_eq!(read(&root, CHARGE_BEHAVIOUR), "inhibit-charge");
+    let Response::Ok { status } = c.call(&Request::SetLid { close: LidAction::IgnoreOnAc }).unwrap() else { panic!() };
+    assert_eq!(status.lid, Some(LidStatus { close: LidAction::IgnoreOnAc, inhibited: false }));
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(text.contains("# test config") && text.contains("[battery]") && text.contains("[lid]"), "{text}");
+    let Response::Ok { status } = c.call(&Request::ChargeFullOnce { on: true }).unwrap() else { panic!() };
+    assert!(status.charge.unwrap().full_once);
+    assert_eq!(read(&root, CHARGE_BEHAVIOUR), "auto");
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), text);
+    let Response::Ok { status } = c.call(&Request::ChargeFullOnce { on: false }).unwrap() else { panic!() };
+    assert!(!status.charge.unwrap().full_once);
+    assert_eq!(read(&root, CHARGE_BEHAVIOUR), "inhibit-charge");
+    // Emulate the kernel's bracketed readback after the write.
+    mk(&root, CHARGE_BEHAVIOUR, "auto [inhibit-charge] force-discharge\n");
+
     // garbage line gets an error reply, connection keeps working
     {
         use std::io::{BufRead, BufReader, Write};
@@ -152,9 +188,12 @@ fn daemon_end_to_end_on_fake_sysfs() {
     assert!(st.success(), "{st:?}");
     assert_eq!(read(&root, "sys/firmware/acpi/platform_profile"), "balanced");
     assert_eq!(read(&root, &format!("{hp}/hwmon/hwmon7/pwm1_enable")), "2");
+    assert_eq!(read(&root, CHARGE_BEHAVIOUR), "auto");
     assert!(!sock.exists());
+    assert!(!status_sock.exists());
 
     // restart: saved state is restored
+    mk(&root, CHARGE_BEHAVIOUR, "[auto] inhibit-charge force-discharge\n");
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_omenctld"))
         .args(["--root", root.to_str().unwrap(), "--socket", sock.to_str().unwrap()])
         .args(["--state", state.to_str().unwrap(), "--config", config.to_str().unwrap()])
@@ -167,6 +206,8 @@ fn daemon_end_to_end_on_fake_sysfs() {
     let Response::Ok { status } = c.call(&Request::Status).unwrap() else { panic!() };
     assert_eq!(status.mode, Mode::Balanced);
     assert_eq!(status.fan, FanMode::Fixed(30));
+    assert_eq!(status.charge.unwrap().state, ChargeState::Holding);
+    assert_eq!(status.lid, Some(LidStatus { close: LidAction::IgnoreOnAc, inhibited: false }));
     unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
     assert!(child.wait().unwrap().success());
 

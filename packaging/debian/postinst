@@ -63,6 +63,8 @@ if [ "$1" = "configure" ]; then
 		# (the stock driver is still loaded); after an upgrade it is started
 		# again only if the driver in memory is the one just installed.
 		systemctl enable omenctld.service || true
+		# The web monitor is off unless the admin enabled it; pick up the new binary if it runs.
+		systemctl try-restart omenctl-web.service 2>/dev/null || true
 	fi
 
 	RESTART=1

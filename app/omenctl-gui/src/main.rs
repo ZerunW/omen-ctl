@@ -6,9 +6,9 @@ mod edit;
 mod theme;
 
 use eframe::egui::{self, Pos2, Rect, Sense, Stroke, Vec2};
-use omenctl_core::config::{ModeRule, ModesConfig};
+use omenctl_core::config::{LidAction, ModeRule, ModesConfig};
 use omenctl_core::curve::{FanCurve, LEVEL_MAX, LEVEL_MIN};
-use omenctl_core::proto::{Client, Request, Response, Status, SOCKET_PATH};
+use omenctl_core::proto::{ChargeState, Client, Request, Response, Status, SOCKET_PATH};
 use omenctl_core::{FanMode, Mode};
 use std::collections::VecDeque;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
@@ -625,6 +625,61 @@ impl App {
                         }
                     }
                     None => theme::kv(ui, p, "Battery", "Not found", p.tertiary),
+                }
+                if let Some(charge) = st.charge {
+                    ui.add_space(4.0);
+                    theme::hairline(ui, p);
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("Charge limit").font(font(13.0)).color(p.secondary));
+                    let mut limits = vec![0, 60, 80];
+                    if !limits.contains(&charge.limit) {
+                        limits.push(charge.limit);
+                    }
+                    let labels: Vec<String> = limits.iter().map(|limit| {
+                        if *limit == 0 { "Off".into() } else { format!("{limit} %") }
+                    }).collect();
+                    let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+                    let available = charge.state != ChargeState::Unavailable;
+                    let enabled = vec![available; limits.len()];
+                    let selected = limits.iter().position(|limit| *limit == charge.limit);
+                    if let Some(i) = theme::segmented(ui, p, "charge_limit", &label_refs, selected, &enabled, ui.available_width()) {
+                        let limit = limits[i];
+                        self.send(Request::SetCharge { limit, resume: if limit == 0 { 55 } else { limit - 5 } });
+                    }
+                    let state = match charge.state {
+                        ChargeState::Holding => format!("Holding at {} % · charges again at {} %", charge.limit, charge.resume),
+                        ChargeState::Charging if charge.full_once => "Charging to 100 % (one time)".into(),
+                        ChargeState::Charging => format!("Charging to {} %", charge.limit),
+                        ChargeState::Discharging => "On battery".into(),
+                        ChargeState::Off => "Charges to 100 %".into(),
+                        ChargeState::Unavailable => "Not supported by the driver".into(),
+                    };
+                    ui.label(egui::RichText::new(state).font(font(12.0)).color(p.secondary));
+                    let text = if charge.full_once { "Cancel full charge" } else { "Charge to 100 % once" };
+                    if theme::button(ui, p, text, ButtonKind::Plain, available) {
+                        self.send(Request::ChargeFullOnce { on: !charge.full_once });
+                    }
+                }
+                if let Some(lid) = st.lid {
+                    ui.add_space(4.0);
+                    theme::hairline(ui, p);
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("When the lid is closed").font(font(13.0)).color(p.secondary));
+                    let actions = [LidAction::Suspend, LidAction::IgnoreOnAc, LidAction::Ignore];
+                    let selected = actions.iter().position(|action| *action == lid.close);
+                    if let Some(i) = theme::segmented(ui, p, "lid_close", &["Suspend", "On AC", "Always"], selected, &[true; 3], ui.available_width()) {
+                        self.send(Request::SetLid { close: actions[i] });
+                    }
+                    let description = if lid.inhibited {
+                        "Lid switch ignored now"
+                    } else {
+                        match lid.close {
+                            LidAction::Suspend => "Desktop default",
+                            LidAction::IgnoreOnAc => "Suspends on battery",
+                            LidAction::Ignore => "Always stays on when closed",
+                        }
+                    };
+                    ui.label(egui::RichText::new(description).font(font(12.0)).color(p.secondary));
                 }
             },
         );

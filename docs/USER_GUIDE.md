@@ -1,6 +1,6 @@
 # omenctl user guide
 
-omenctl controls performance mode and fans on the **HP OMEN 16-am0xxx (board 8D3F)**
+omenctl controls performance mode, fans and battery charging on the **HP OMEN 16-am0xxx (board 8D3F)**
 under Linux. It has four parts:
 
 | Part | What it is | Runs as |
@@ -9,6 +9,7 @@ under Linux. It has four parts:
 | `omenctld` | Background service. Applies the mode, drives the fans, watches temperatures. | root (systemd) |
 | `omenctl` | Command line tool. | your user |
 | `omenctl-gui` | Desktop app ("OMEN Control"). | your user |
+| `omenctl-web` | Optional read-only web dashboard, off by default. | unprivileged throwaway user (systemd) |
 
 The command line tool and the desktop app only talk to the service through the socket
 `/run/omenctl.sock`. Only the service writes to the hardware, and it only uses standard
@@ -22,13 +23,16 @@ talks to the firmware is described in [internals.md](internals.md).
 3. [Install](#3-install)
 4. [Modes](#4-modes)
 5. [Fans](#5-fans)
-6. [Desktop app](#6-desktop-app)
-7. [Command line](#7-command-line)
-8. [Configuration](#8-configuration)
-9. [Safety](#9-safety)
-10. [Behaviour around sleep, power and other tools](#10-behaviour-around-sleep-power-and-other-tools)
-11. [Troubleshooting](#11-troubleshooting)
-12. [Uninstall and rollback](#12-uninstall-and-rollback)
+6. [Charge limit](#6-charge-limit)
+7. [Lid close](#7-lid-close)
+8. [Remote monitor](#8-remote-monitor)
+9. [Desktop app](#9-desktop-app)
+10. [Command line](#10-command-line)
+11. [Configuration](#11-configuration)
+12. [Safety](#12-safety)
+13. [Behaviour around sleep, power and other tools](#13-behaviour-around-sleep-power-and-other-tools)
+14. [Troubleshooting](#14-troubleshooting)
+15. [Uninstall and rollback](#15-uninstall-and-rollback)
 
 ## 1. Requirements
 
@@ -65,14 +69,14 @@ cd app && cargo test
 ## 3. Install
 
 ```bash
-sudo apt install ./omenctl_0.2.9_amd64.deb  # or ./packaging/out/... if you built it
+sudo apt install ./omenctl_0.3.0_amd64.deb  # or ./packaging/out/... if you built it
 sudo usermod -aG omenctl $USER              # then log out and in again
 sudo reboot                                 # loads the patched driver
 ```
 
 What the installation does (`apt remove` undoes it and keeps your config; `apt purge`
 also deletes config, state and the group; see
-[section 12](#12-uninstall-and-rollback)):
+[section 15](#15-uninstall-and-rollback)):
 
 | Step | Detail |
 |---|---|
@@ -168,7 +172,121 @@ The default is the BIOS fan table. The temperatures assigned to its rows are pro
 until calibrated on the machine (see [HARDWARE_TEST.md](HARDWARE_TEST.md), "Later").
 Curves must not go down as the temperature rises; the editor and the service both enforce it.
 
-## 6. Desktop app
+## 6. Charge limit
+
+For a laptop that stays plugged in: charging stops at a set level and starts again once
+the battery has dropped a few percent, so the battery does not sit at 100 %. Off by default.
+
+```bash
+omenctl charge 60 55      # stop at 60 %, charge again at 55 %
+omenctl charge 80         # stop at 80 %, charge again at 75 %
+omenctl charge            # show the state
+omenctl charge full       # charge to 100 % once (for a trip); ends when unplugged or full
+omenctl charge off        # charge to 100 % as usual
+```
+
+The desktop app has the same in the Power supply card. The setting is saved in
+`[battery]` of `/etc/omenctl/config.toml`.
+
+How it works: the service writes the kernel's standard battery property
+`/sys/class/power_supply/BAT0/charge_behaviour`: `inhibit-charge` at the limit (the laptop
+then runs from the adapter and the battery stays where it is), `auto` at the resume level.
+The patched driver provides that property on 8D3F (the mainline driver offers it only on a
+few other HP models); the firmware commands behind it are listed in
+[internals.md](internals.md).
+
+- On battery the limit does nothing; charging is set back to `auto` as soon as the adapter
+  is unplugged.
+- Powering off or rebooting keeps the limit: the service leaves `inhibit-charge` set, and
+  the firmware keeps it while the laptop is off and plugged in.
+- Stopping the service (`systemctl stop`), a crash (via the safety script) and
+  uninstalling set `auto` again: the worst case is a battery that charges to 100 %.
+- Holding means the battery is neither charged nor used, so a battery that is already
+  above the limit stays there while plugged in. Run on battery once to bring it down.
+- Lithium-ion batteries age fastest when kept full and warm. Laptop makers' "always
+  plugged in" modes stop at 55-60 % (Lenovo conservation mode, ASUS maximum lifespan) or
+  80 %.
+
+## 7. Lid close
+
+Keep the laptop running with the lid closed, for example to use it as a small home server.
+
+```bash
+omenctl lid ignore-on-ac  # keep running while plugged in, suspend on battery
+omenctl lid ignore        # always keep running
+omenctl lid suspend       # desktop default
+omenctl lid               # show the setting
+```
+
+Also in the desktop app (Power supply card), saved in `[lid]` of the configuration.
+
+The service holds a systemd-logind inhibitor lock (`handle-lid-switch`) while the lid
+should be ignored; `systemd-inhibit --list` shows it as `omenctl`. Nothing is written to
+the logind configuration, and the lock disappears when the service stops, so closing the
+lid suspends again. Notes:
+
+- With the lid closed, the desktop turns off the built-in screen when external monitors
+  are connected. Without external monitors the built-in screen may stay on behind the lid
+  until the desktop blanks it after its idle time (Settings > Power > Screen Blank).
+- Heat leaves through the keyboard deck less well with the lid closed; watch the
+  temperatures under long heavy load.
+- GNOME's own idle suspend is separate (Settings > Power > Automatic Suspend). For a
+  server, turn it off for "Plugged In".
+
+## 8. Remote monitor
+
+`omenctl-web` is a read-only dashboard for a browser on another device: usage of every
+CPU core, memory, Intel and NVIDIA GPU usage, the processes `nvidia-smi` lists, every
+process (sortable, searchable), fans, temperatures, power and battery, charge limit,
+network rates and VPN state (GlobalProtect, Tailscale). Nothing can be changed through it.
+
+It is installed but not enabled. It listens on `127.0.0.1:8787` (this machine only), so it
+is meant to be reached through a tunnel or reverse proxy on the same machine:
+
+```bash
+sudo systemctl enable --now omenctl-web
+curl -s http://127.0.0.1:8787/healthz        # "ok"
+```
+
+It runs as an unprivileged throwaway user (systemd `DynamicUser`) and reads the service
+status through the read-only socket `/run/omenctl-status.sock` (which accepts nothing but
+status requests), so even a compromised web process cannot change any setting. It samples
+only while someone is watching (a request in the last
+15 s), so an unwatched dashboard costs nothing and never wakes the NVIDIA GPU. While a page
+is open it uses about 3 % of one CPU core.
+
+Settings go into `/etc/omenctl/web.env` (then `sudo systemctl restart omenctl-web`):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OMENCTL_WEB_LISTEN` | `127.0.0.1:8787` | Address and port |
+| `OMENCTL_WEB_TOKEN_FILE` | not set | File with a token: 16 or more characters from `A-Z a-z 0-9 - _` (e.g. `openssl rand -hex 24`), readable by the service (`chmod 644`). Then every request needs it: open `/?token=<token>` once per browser (stored in a cookie) or send `Authorization: Bearer <token>` |
+
+The process list shows full command lines, which can contain paths and sometimes secrets
+passed as arguments. Keep it behind a login.
+
+**Cloudflare Tunnel with Cloudflare Access** (no port opened on the laptop or router;
+needs a domain on Cloudflare). Set up the login before the hostname goes live:
+
+1. Zero Trust > Access > Applications: add a self-hosted application for the hostname you
+   will use (e.g. `omen.example.com`) with a policy that allows only your e-mail address
+   (one-time PIN or another login). Note its Application Audience (AUD) tag.
+2. Install `cloudflared` from Cloudflare's apt repository
+   ([instructions](https://pkg.cloudflare.com/index.html)).
+3. Zero Trust > Networks > Tunnels: create a tunnel and run the shown
+   `sudo cloudflared service install <token>` on the laptop. Add the public hostname with
+   service `http://127.0.0.1:8787`, and under its Access settings turn on
+   "Protect with Access" (team name and the AUD tag from step 1), so `cloudflared` itself
+   rejects requests without a valid Access token.
+4. Open the hostname: Cloudflare asks for the login first.
+
+**LAN or Tailscale** instead: set `OMENCTL_WEB_LISTEN=0.0.0.0:8787` and a token file, and
+allow the port only from the networks you need (`sudo ufw allow from 192.168.1.0/24 to any
+port 8787 proto tcp`). This is plain HTTP: the token and the data cross the LAN
+unencrypted. Inside a Tailscale or WireGuard tunnel to the laptop that is fine; across a
+shared LAN put an HTTPS reverse proxy in front.
+
+## 9. Desktop app
 
 Start **OMEN Control** from the application menu, or run `omenctl-gui`.
 
@@ -197,7 +315,7 @@ Start **OMEN Control** from the application menu, or run `omenctl-gui`.
 
 Options: `--theme light|dark|system` (for this run only; otherwise the saved choice), `--socket PATH`.
 
-## 7. Command line
+## 10. Command line
 
 ```bash
 omenctl status            # or: omenctl status --json
@@ -209,6 +327,8 @@ omenctl defaults ac unleashed      # startup | ac | battery, then keep | saver |
 omenctl defaults startup keep      # keep = last used (startup) or no change (ac, battery, low)
 omenctl defaults low saver         # mode when the battery runs low
 omenctl defaults low-at 15         # low battery threshold, 5-50 %
+omenctl charge 60 55      # charge limit (see section 6); off | full | full off
+omenctl lid ignore-on-ac  # lid close (see section 7): suspend | ignore-on-ac | ignore
 ```
 
 `omenctl status` also shows the power source, the adapter rating (when the driver reports
@@ -216,7 +336,7 @@ it), the battery and USB-C power input.
 
 Errors (for example `fan auto` in Unleashed) are printed and the exit code is 1.
 
-## 8. Configuration
+## 11. Configuration
 
 `/etc/omenctl/config.toml`, commented. Apply changes with
 `sudo systemctl restart omenctld`. Every setting has a safe default; an invalid file makes
@@ -234,12 +354,14 @@ the service refuse to start (see `journalctl -u omenctld`).
 | `[cpu] unleashed_epp` | `auto` | CPU EPP while in Unleashed (`auto` = by load, `keep` = leave it to power-profiles-daemon) |
 | `[cpu] gpu_priority_pl1` | `70` | Unleashed: CPU sustained limit (W) while the GPU is busy, 0 = off |
 | `[cpu] auto_busy_percent`, `auto_idle_s` | `50`, `10` | `auto`: a CPU busy at least this share of a second switches to `performance`; back after this many idle seconds |
+| `[battery] charge_limit`, `charge_resume` | `0`, `55` | Charge limit (see [Charge limit](#6-charge-limit)); 0 = off, else 50 to 100 % |
+| `[lid] close` | `suspend` | `suspend`, `ignore_on_ac` or `ignore` (see [Lid close](#7-lid-close)) |
 | `[protect] fans_max_at` | `92` | Both fans to maximum at this temperature (°C) |
 | `[protect] drop_at`, `drop_after_s` | `95`, `10` | Leave Unleashed after this long at this temperature |
 | `[protect] restore_below`, `restore_after_s` | `80`, `30` | Return to the selected mode after cooling |
 | `[protect] rpm_ratio`, `rpm_fail_after_s` | `0.7`, `10` | Fan fault: measured below target × ratio for this long |
 
-## 9. Safety
+## 12. Safety
 
 Every failure path ends with more cooling and less power.
 
@@ -256,7 +378,7 @@ Every failure path ends with more cooling and less power.
 4. **Temperature**: at 92 °C fans go to maximum in every fan mode (including Auto); 10 s at
    95 °C leaves Unleashed until 30 s below 80 °C. A missing CPU temperature is treated as hot.
 
-## 10. Behaviour around sleep, power and other tools
+## 13. Behaviour around sleep, power and other tools
 
 - **Sleep**: after resume the service re-applies the full mode switch (the EC can lose its
   state while asleep).
@@ -270,7 +392,7 @@ Every failure path ends with more cooling and less power.
 - **Boot**: loading the driver briefly hands the fans to the EC (they may stop for about
   two minutes while the machine is idle); the service takes over when it starts.
 
-## 11. Troubleshooting
+## 14. Troubleshooting
 
 | Symptom | Check |
 |---|---|
@@ -282,7 +404,7 @@ Every failure path ends with more cooling and less power.
 | Fans stuck at full speed | `cat /sys/devices/platform/hp-wmi/omenctl_kick` (`tripped=1` means the kernel watchdog fired: is the service running?) |
 | Bluetooth keyboard cannot wake the laptop from suspend | Not an OMEN problem (BlueZ); see [ubuntu-ble-wake-fix](https://github.com/ZerunW/ubuntu-ble-wake-fix) |
 
-## 12. Uninstall and rollback
+## 15. Uninstall and rollback
 
 ```bash
 sudo apt remove omenctl        # keep config and state
@@ -297,7 +419,7 @@ Emergency, without the package tools:
 
 ```bash
 sudo systemctl disable --now omenctld
-sudo dkms remove omenctl-hp-wmi/0.2.9 --all
+sudo dkms remove omenctl-hp-wmi/0.3.0 --all
 sudo reboot
 ```
 

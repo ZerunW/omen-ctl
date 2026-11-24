@@ -1,8 +1,8 @@
 //! omenctl: command-line client for omenctld.
 
-use omenctl_core::config::{ModeRule, ModesConfig};
+use omenctl_core::config::{BatteryConfig, LidAction, ModeRule, ModesConfig};
 use omenctl_core::curve::{LEVEL_MAX, LEVEL_MIN};
-use omenctl_core::proto::{Client, Request, Response, Status, SOCKET_PATH};
+use omenctl_core::proto::{ChargeState, Client, Request, Response, Status, SOCKET_PATH};
 use omenctl_core::{FanMode, Mode};
 
 const USAGE: &str = "usage:
@@ -17,6 +17,12 @@ const USAGE: &str = "usage:
                                            set one rule (startup keep = last used mode,
                                            ac/battery/low keep = do not switch)
   omenctl defaults low-at <5-50>           low battery threshold in percent
+  omenctl charge                           show the charge limit state
+  omenctl charge <limit> [resume]          set percentages (resume defaults to limit minus 5)
+  omenctl charge off                       turn off the charge limit
+  omenctl charge full [off]                start or cancel a one-time full charge
+  omenctl lid                              show the lid close setting
+  omenctl lid suspend|ignore-on-ac|ignore  set what closing the lid does
 
 options:
   --socket PATH                            service socket (default /run/omenctl.sock)";
@@ -87,6 +93,8 @@ fn print_status(s: &Status) {
         }
         println!("USB-C             {line}");
     }
+    print_charge(s);
+    print_lid(s);
     if s.alerts.is_empty() {
         println!("alerts            none");
     } else {
@@ -94,6 +102,40 @@ fn print_status(s: &Status) {
             println!("alert             {a}");
         }
     }
+}
+
+fn print_charge(s: &Status) {
+    let line = s.charge.map_or_else(
+        || "not supported".into(),
+        |c| {
+            let state = match c.state {
+                ChargeState::Holding => "holding",
+                ChargeState::Charging => "charging",
+                ChargeState::Discharging => "discharging",
+                ChargeState::Off => return "off".into(),
+                ChargeState::Unavailable => return "not supported".into(),
+            };
+            let once = if c.full_once { " (full charge once)" } else { "" };
+            format!("{}% (charge again at {}%): {state}{once}", c.limit, c.resume)
+        },
+    );
+    println!("charge limit      {line}");
+}
+
+fn print_lid(s: &Status) {
+    let (line, ignored) = match s.lid {
+        None => ("not supported", false),
+        Some(lid) => {
+            let setting = match lid.close {
+                LidAction::Suspend => "suspend (desktop default)",
+                LidAction::IgnoreOnAc => "keep running on AC",
+                LidAction::Ignore => "keep running",
+            };
+            (setting, lid.inhibited)
+        }
+    };
+    let now = if ignored { " (lid switch ignored now)" } else { "" };
+    println!("lid close         {line}{now}");
 }
 
 fn rule_label(r: ModeRule, startup: bool) -> &'static str {
@@ -115,6 +157,8 @@ fn print_modes(m: &ModesConfig) {
 
 enum Cmd {
     Call(Request, bool),
+    Charge(Request),
+    Lid(Request),
     /// Change one mode rule: read the current rules, then write them back.
     SetRule(String, ModeRule),
     /// Change the low battery threshold.
@@ -126,6 +170,7 @@ enum Cmd {
 fn parse(words: &[String]) -> Result<(Request, bool), String> {
     match parse_cmd(words)? {
         Cmd::Call(r, j) => Ok((r, j)),
+        Cmd::Charge(r) | Cmd::Lid(r) => Ok((r, false)),
         Cmd::SetRule(..) | Cmd::SetLowAt(_) => Ok((Request::GetSettings, false)),
     }
 }
@@ -153,8 +198,36 @@ fn parse_cmd(words: &[String]) -> Result<Cmd, String> {
     if let ["defaults"] = w.as_slice() {
         return Ok(Cmd::Call(Request::GetSettings, false));
     }
+    if let ["charge", args @ ..] = w.as_slice() {
+        return Ok(Cmd::Charge(parse_charge(args)?));
+    }
+    if let ["lid"] = w.as_slice() {
+        return Ok(Cmd::Lid(Request::Status));
+    }
+    if let ["lid", action] = w.as_slice() {
+        let close = LidAction::parse(&action.replace('-', "_"))
+            .ok_or_else(|| format!("unknown lid action {action} (use suspend, ignore-on-ac or ignore)"))?;
+        return Ok(Cmd::Lid(Request::SetLid { close }));
+    }
     let (r, j) = parse_basic(&w)?;
     Ok(Cmd::Call(r, j))
+}
+
+fn parse_charge(args: &[&str]) -> Result<Request, String> {
+    let percent = |s: &str| s.parse::<u8>().map_err(|_| format!("invalid charge percentage: {s}"));
+    match args {
+        [] => Ok(Request::Status),
+        ["full"] => Ok(Request::ChargeFullOnce { on: true }),
+        ["full", "off"] => Ok(Request::ChargeFullOnce { on: false }),
+        ["off"] => Ok(Request::SetCharge { limit: 0, resume: BatteryConfig::default().charge_resume }),
+        [limit] => {
+            let limit = percent(limit)?;
+            let resume = limit.checked_sub(5).ok_or("charge limit too low to calculate resume percentage")?;
+            Ok(Request::SetCharge { limit, resume })
+        }
+        [limit, resume] => Ok(Request::SetCharge { limit: percent(limit)?, resume: percent(resume)? }),
+        _ => Err(USAGE.into()),
+    }
 }
 
 fn parse_basic(w: &[&str]) -> Result<(Request, bool), String> {
@@ -200,8 +273,10 @@ fn run() -> Result<(), String> {
     }
     let cmd = parse_cmd(&words)?;
     let mut c = Client::connect(&socket)?;
-    let (req, json) = match cmd {
-        Cmd::Call(r, j) => (r, j),
+    let (req, json, print): (_, _, fn(&Status)) = match cmd {
+        Cmd::Call(r, j) => (r, j, print_status),
+        Cmd::Charge(r) => (r, false, print_charge),
+        Cmd::Lid(r) => (r, false, print_lid),
         Cmd::SetRule(..) | Cmd::SetLowAt(_) => {
             let Response::Settings { mut modes } = c.call(&Request::GetSettings)? else {
                 return Err("unexpected reply from the service".into());
@@ -214,9 +289,9 @@ fn run() -> Result<(), String> {
                     _ => modes.on_battery = rule,
                 },
                 Cmd::SetLowAt(n) => modes.low_battery_percent = n,
-                Cmd::Call(..) => unreachable!(),
+                _ => unreachable!(),
             }
-            (Request::SetSettings { modes }, false)
+            (Request::SetSettings { modes }, false, print_status)
         }
     };
     match c.call(&req)? {
@@ -228,7 +303,7 @@ fn run() -> Result<(), String> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&status).map_err(|e| e.to_string())?);
             } else {
-                print_status(&status);
+                print(&status);
             }
             Ok(())
         }
@@ -273,5 +348,23 @@ mod tests {
         assert!(matches!(parse_cmd(&["defaults".into(), "low".into(), "saver".into()]), Ok(Cmd::SetRule(w, ModeRule::PowerSaver)) if w == "low"));
         assert!(matches!(parse_cmd(&["defaults".into(), "low-at".into(), "15".into()]), Ok(Cmd::SetLowAt(15))));
         assert!(parse_cmd(&["defaults".into(), "low-at".into(), "80".into()]).is_err());
+    }
+
+    #[test]
+    fn parses_charge_and_lid_commands() {
+        assert!(matches!(parse_cmd(&["charge".into()]), Ok(Cmd::Charge(Request::Status))));
+        assert_eq!(p("charge 60 54").unwrap().0, Request::SetCharge { limit: 60, resume: 54 });
+        assert_eq!(p("charge 60").unwrap().0, Request::SetCharge { limit: 60, resume: 55 });
+        assert_eq!(p("charge off").unwrap().0, Request::SetCharge { limit: 0, resume: BatteryConfig::default().charge_resume });
+        assert_eq!(p("charge full").unwrap().0, Request::ChargeFullOnce { on: true });
+        assert_eq!(p("charge full off").unwrap().0, Request::ChargeFullOnce { on: false });
+        assert!(p("charge 3").is_err());
+        assert!(p("charge 60 x").is_err());
+        assert!(p("charge full on").is_err());
+        assert!(matches!(parse_cmd(&["lid".into()]), Ok(Cmd::Lid(Request::Status))));
+        assert_eq!(p("lid suspend").unwrap().0, Request::SetLid { close: LidAction::Suspend });
+        assert_eq!(p("lid ignore-on-ac").unwrap().0, Request::SetLid { close: LidAction::IgnoreOnAc });
+        assert_eq!(p("lid ignore").unwrap().0, Request::SetLid { close: LidAction::Ignore });
+        assert!(p("lid sleep").is_err());
     }
 }

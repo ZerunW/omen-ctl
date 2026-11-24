@@ -82,3 +82,20 @@ auto_idle_s = 10
 # after the GPU stays below 30 W for 15 s. 0 = off, else 35-90.
 gpu_priority_pl1 = 70
 
+
+[battery]
+# Charge limit for a laptop that stays plugged in. On AC, charging stops when
+# the battery reaches charge_limit % and starts again once it has dropped to
+# charge_resume %; meanwhile the laptop runs from the adapter. On battery,
+# after a service stop and after uninstalling, charging is normal again.
+# Uses the kernel's /sys/class/power_supply/BAT0/charge_behaviour.
+# 0 = off (charge to 100 %), else 50-100. Example for "always plugged in": 60 / 55.
+charge_limit = 0
+charge_resume = 55
+
+[lid]
+# What closing the lid does: "suspend" (desktop default, omenctl does nothing),
+# "ignore_on_ac" (keep running while plugged in, suspend on battery) or
+# "ignore" (always keep running). Done with a systemd-logind inhibitor lock held
+# by the service; the logind configuration is not changed.
+close = "suspend"

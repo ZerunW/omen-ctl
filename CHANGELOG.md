@@ -5,7 +5,36 @@ All notable changes to omenctl. The format is based on
 workspace version. Release headings stay in the `## <version> - <date>` form because the
 release workflow extracts the notes with it.
 
-## Unreleased
+## 0.3.0 - 2026-11-23
+
+### Added
+
+- Charge limit: on AC the service stops charging at `[battery] charge_limit` % and
+  charges again at `charge_resume` % (off by default), through the kernel's
+  `charge_behaviour` battery property. One-time full charge. `omenctl charge`, desktop app
+  (Power supply card). Charging is set back to normal on battery, when the service is
+  stopped (also after a crash) and on uninstall; a poweroff or reboot keeps the limit.
+  Writes to the firmware run off the control loop, so a firmware that does not answer
+  cannot stall the fan control.
+- Driver: board 8D3F added to the mainline charge control quirk list, which provides
+  `/sys/class/power_supply/BAT0/charge_behaviour`.
+- Lid close: `[lid] close = "ignore_on_ac"` or `"ignore"` keeps the laptop running with
+  the lid closed, with a systemd-logind inhibitor lock held by the service (no logind
+  configuration is changed). `omenctl lid`, desktop app.
+- `omenctl-web`: optional read-only web dashboard (per-core CPU, memory, Intel and NVIDIA
+  GPU usage and GPU processes, all processes, fans, temperatures, power, battery, charge
+  limit, network rates, GlobalProtect / Tailscale state). Installed but not enabled;
+  listens on 127.0.0.1:8787, runs as a systemd `DynamicUser` without access to the
+  control socket, samples only while watched, optional token. Setup with Cloudflare Tunnel
+  and Access in the user guide.
+- Read-only status socket `/run/omenctl-status.sock` (status requests only, open to every
+  local user), used by `omenctl-web`.
+
+### Fixed
+
+- At boot, power-profiles-daemon restored its saved profile (balanced) right after
+  omenctld had applied the startup mode, and omenctld adopted it as a user change. The
+  service now starts after power-profiles-daemon.
 
 ### Changed
 

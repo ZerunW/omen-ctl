@@ -19,6 +19,66 @@ pub struct Config {
     pub fan: FanConfig,
     pub protect: ProtectConfig,
     pub cpu: CpuConfig,
+    pub battery: BatteryConfig,
+    pub lid: LidConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BatteryConfig {
+    /// Stop charging at this battery level (%) while on AC. 0 = off (charge to
+    /// full as usual), else 50..=100. Uses the kernel's charge_behaviour
+    /// (inhibit-charge / auto).
+    pub charge_limit: u8,
+    /// Charge again once the battery has dropped to this level (%). 40..limit.
+    pub charge_resume: u8,
+}
+
+impl Default for BatteryConfig {
+    fn default() -> Self {
+        BatteryConfig { charge_limit: 0, charge_resume: 55 }
+    }
+}
+
+/// What closing the lid does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LidAction {
+    /// The desktop's normal behaviour (usually suspend). omenctl does nothing.
+    #[default]
+    Suspend,
+    /// Keep running with the lid closed while on AC power; suspend as usual on battery.
+    IgnoreOnAc,
+    /// Keep running with the lid closed, also on battery.
+    Ignore,
+}
+
+impl LidAction {
+    pub fn parse(s: &str) -> Option<LidAction> {
+        match s {
+            "suspend" => Some(LidAction::Suspend),
+            "ignore_on_ac" => Some(LidAction::IgnoreOnAc),
+            "ignore" => Some(LidAction::Ignore),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LidAction::Suspend => "suspend",
+            LidAction::IgnoreOnAc => "ignore_on_ac",
+            LidAction::Ignore => "ignore",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LidConfig {
+    /// Implemented with a systemd-logind "handle-lid-switch" inhibitor lock held
+    /// by the service; nothing is written to the logind configuration, and the
+    /// lock goes away when the service stops.
+    pub close: LidAction,
 }
 
 /// EPP values accepted by intel_pstate, plus "keep" (don't touch) and "auto"
@@ -204,6 +264,8 @@ impl Default for Config {
             fan: FanConfig::default(),
             protect: ProtectConfig::default(),
             cpu: CpuConfig::default(),
+            battery: BatteryConfig::default(),
+            lid: LidConfig::default(),
         }
     }
 }
@@ -301,6 +363,13 @@ impl Config {
         }
         if !(0.1..=1.0).contains(&p.rpm_ratio) {
             return Err("protect.rpm_ratio must be in 0.1..=1.0".into());
+        }
+        let b = &self.battery;
+        if b.charge_limit != 0 && !(50..=100).contains(&b.charge_limit) {
+            return Err("battery.charge_limit must be 0 (off) or 50-100".into());
+        }
+        if !(40..=99).contains(&b.charge_resume) || (b.charge_limit != 0 && b.charge_resume >= b.charge_limit) {
+            return Err("battery.charge_resume must be 40-99 and below battery.charge_limit".into());
         }
         for (name, v) in [("power_saver", self.rapl.power_saver), ("balanced", self.rapl.balanced), ("unleashed", self.rapl.unleashed)] {
             if let Some((pl1, pl2)) = v {
@@ -533,4 +602,47 @@ mod tests {
         assert!(Config::from_toml("[rapl]\nunleashed = [150, 200]\n").is_err());
         assert!(Config::from_toml("[fan]\ntable_max = 60\n").is_err());
     }
+}
+
+/// Replace the value of `key` in table `table` of `doc`, keeping a trailing comment.
+fn set_value(doc: &mut toml_edit::DocumentMut, table: &str, key: &str, v: toml_edit::Value) -> Result<(), String> {
+    let t = doc.entry(table).or_insert(toml_edit::table());
+    let t = t.as_table_mut().ok_or(format!("config.toml: [{table}] is not a table"))?;
+    match t.get_mut(key).and_then(|i| i.as_value_mut()) {
+        Some(old) => {
+            let decor = old.decor().clone();
+            *old = v;
+            *old.decor_mut() = decor;
+        }
+        None => {
+            t.insert(key, toml_edit::value(v));
+        }
+    }
+    Ok(())
+}
+
+/// Return `existing` (config.toml text, may be empty) with `[battery]` replaced,
+/// keeping every other line and comment. Validated before returning.
+pub fn with_battery(existing: &str, b: &BatteryConfig) -> Result<String, String> {
+    let mut doc: toml_edit::DocumentMut = existing.parse().map_err(|e| format!("config.toml: {e}"))?;
+    set_value(&mut doc, "battery", "charge_limit", (b.charge_limit as i64).into())?;
+    set_value(&mut doc, "battery", "charge_resume", (b.charge_resume as i64).into())?;
+    let out = doc.to_string();
+    let c = Config::from_toml(&out)?;
+    if &c.battery != b {
+        return Err("internal error: battery settings did not round-trip".into());
+    }
+    Ok(out)
+}
+
+/// Return `existing` with `[lid] close` replaced, keeping everything else.
+pub fn with_lid(existing: &str, close: LidAction) -> Result<String, String> {
+    let mut doc: toml_edit::DocumentMut = existing.parse().map_err(|e| format!("config.toml: {e}"))?;
+    set_value(&mut doc, "lid", "close", close.as_str().into())?;
+    let out = doc.to_string();
+    let c = Config::from_toml(&out)?;
+    if c.lid.close != close {
+        return Err("internal error: lid setting did not round-trip".into());
+    }
+    Ok(out)
 }

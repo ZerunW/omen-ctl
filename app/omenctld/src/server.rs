@@ -41,6 +41,19 @@ pub fn bind(path: &Path, group: &str) -> std::io::Result<UnixListener> {
     Ok(l)
 }
 
+/// Create the read-only status socket (mode 0666: any local user may read the status).
+pub fn bind_status(path: &Path) -> std::io::Result<UnixListener> {
+    use std::os::unix::fs::PermissionsExt;
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let l = UnixListener::bind(path)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))?;
+    Ok(l)
+}
+
 fn lookup_gid(group: &str) -> Option<u32> {
     let c = std::ffi::CString::new(group).ok()?;
     // SAFETY: getgrnam returns NULL or a pointer to static storage; we only read gr_gid
@@ -53,7 +66,8 @@ fn lookup_gid(group: &str) -> Option<u32> {
     }
 }
 
-pub fn spawn(listener: UnixListener, jobs: Sender<Job>) {
+/// `read_only`: only `Status` is accepted on this listener.
+pub fn spawn(listener: UnixListener, jobs: Sender<Job>, read_only: bool) {
     let active = Arc::new(AtomicUsize::new(0));
     std::thread::spawn(move || {
         for conn in listener.incoming() {
@@ -66,7 +80,7 @@ pub fn spawn(listener: UnixListener, jobs: Sender<Job>) {
             let jobs = jobs.clone();
             let active = active.clone();
             std::thread::spawn(move || {
-                handle(stream, jobs);
+                handle(stream, jobs, read_only);
                 active.fetch_sub(1, Ordering::SeqCst);
             });
         }
@@ -79,7 +93,7 @@ fn reply_line(mut s: &UnixStream, r: &Response) -> std::io::Result<()> {
     s.write_all(line.as_bytes())
 }
 
-fn handle(stream: UnixStream, jobs: Sender<Job>) {
+fn handle(stream: UnixStream, jobs: Sender<Job>, read_only: bool) {
     // idle clients are dropped after 10 min; the GUI polls every second
     stream.set_read_timeout(Some(Duration::from_secs(600))).ok();
     stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
@@ -101,6 +115,9 @@ fn handle(stream: UnixStream, jobs: Sender<Job>) {
         }
         let resp = match serde_json::from_str::<Request>(&line) {
             Err(e) => Response::Error { message: format!("bad request: {e}") },
+            Ok(req) if read_only && req != Request::Status => {
+                Response::Error { message: "this socket is read-only (status only)".into() }
+            }
             Ok(req) => {
                 let (tx, rx): (SyncSender<Response>, Receiver<Response>) = sync_channel(1);
                 if jobs.send(Job { req, reply: tx }).is_err() {
