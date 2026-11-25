@@ -69,7 +69,7 @@ cd app && cargo test
 ## 3. Install
 
 ```bash
-sudo apt install ./omenctl_0.3.3_amd64.deb  # or ./packaging/out/... if you built it
+sudo apt install ./omenctl_0.3.4_amd64.deb  # or ./packaging/out/... if you built it
 sudo usermod -aG omenctl $USER              # then log out and in again
 sudo reboot                                 # loads the patched driver
 ```
@@ -239,6 +239,8 @@ lid suspends again. Notes:
 CPU core, memory, Intel and NVIDIA GPU usage, the processes `nvidia-smi` lists, every
 process (sortable, searchable), fans, temperatures, power and battery, charge limit,
 network rates and VPN state (OpenConnect, GlobalProtect, Tailscale). Nothing can be changed through it.
+An OpenConnect client that runs but has no tunnel yet is shown as connecting (it is
+logging in, for example waiting for a Duo push), with a notice in the page header.
 
 It is installed but not enabled. It listens on `127.0.0.1:8787` (this machine only), so it
 is meant to be reached through a tunnel or reverse proxy on the same machine:
@@ -419,7 +421,7 @@ Emergency, without the package tools:
 
 ```bash
 sudo systemctl disable --now omenctld
-sudo dkms remove omenctl-hp-wmi/0.3.3 --all
+sudo dkms remove omenctl-hp-wmi/0.3.4 --all
 sudo reboot
 ```
 

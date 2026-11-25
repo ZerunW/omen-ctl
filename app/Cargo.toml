@@ -3,7 +3,7 @@ resolver = "2"
 members = ["omenctl-core", "omenctld", "omenctl-cli", "omenctl-gui", "omenctl-web"]
 
 [workspace.package]
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 license = "GPL-2.0-or-later"
 

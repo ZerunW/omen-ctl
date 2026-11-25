@@ -283,16 +283,26 @@ fn vpn_openconnect_connected_and_disconnected() {
     tree.write("proc/77/cmdline", b"openconnect\0--protocol=gp\0--user=someone\0vpn.example.edu\0");
     let mut collector = tree.collector();
 
-    // process running, tunnel not up yet
+    // process running, tunnel not up yet: logging in (e.g. waiting for a Duo push)
+    tree.write("proc/uptime", "100.00 50.00\n");
     let vpn = collector.sample_at(Instant::now()).vpn;
     assert_eq!(vpn.len(), 1);
     assert_eq!(vpn[0].name, "OpenConnect (GlobalProtect)");
     assert!(!vpn[0].connected);
+    assert_eq!(vpn[0].state, "connecting");
     assert_eq!(vpn[0].interface, None);
+    assert_eq!(vpn[0].server.as_deref(), Some("vpn.example.edu"));
+    let since = vpn[0].connecting_since_ms.expect("start time known");
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    // started at 10 ticks after boot, uptime 100 s: about 99.9 s ago
+    let age = now - since;
+    assert!((99_000..=101_000).contains(&age), "age {age} ms");
 
     tree.write("sys/class/net/tun0/operstate", "unknown\n");
     let first = collector.sample_at(Instant::now()).vpn;
     assert!(first[0].connected);
+    assert_eq!(first[0].state, "connected");
+    assert_eq!(first[0].connecting_since_ms, None);
     assert_eq!(first[0].interface.as_deref(), Some("tun0"));
     let since = first[0].since_ms;
     assert!(since.is_some());
@@ -302,6 +312,7 @@ fn vpn_openconnect_connected_and_disconnected() {
     tree.write("sys/class/net/tun0/operstate", "down\n");
     let down = collector.sample_at(Instant::now()).vpn;
     assert!(!down[0].connected);
+    assert_eq!(down[0].state, "connecting", "process still running, tunnel down");
     assert_eq!(down[0].since_ms, None);
 }
 

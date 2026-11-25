@@ -5,6 +5,16 @@ All notable changes to omenctl. The format is based on
 workspace version. Release headings stay in the `## <version> - <date>` form because the
 release workflow extracts the notes with it.
 
+## 0.3.4 - 2026-11-24
+
+### Added
+
+- `omenctl-web`: an OpenConnect VPN that is running but has no tunnel yet is shown as
+  "Connecting…" (logging in, e.g. waiting for a Duo push to be approved), with the
+  server and how long it has been waiting; while that lasts the page header shows a
+  notice, so a sign-in request on the phone can be matched to this machine. Detected from
+  the openconnect process and the tunnel interface only.
+
 ## 0.3.3 - 2026-11-23
 
 ### Changed

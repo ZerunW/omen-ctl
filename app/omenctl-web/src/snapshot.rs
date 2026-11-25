@@ -119,12 +119,22 @@ pub struct NetIf {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Vpn {
-    /// "GlobalProtect" or "Tailscale".
+    /// e.g. "OpenConnect (GlobalProtect)", "GlobalProtect", "Tailscale".
     pub name: String,
-    /// Tunnel interface, if it exists (e.g. "gpd0").
+    /// Tunnel interface, if it exists (e.g. "tun0", "gpd0").
     pub interface: Option<String>,
     /// The tunnel interface exists and is not down.
     pub connected: bool,
+    /// "connected", "connecting" (OpenConnect running but no tunnel yet: logging in,
+    /// e.g. waiting for a Duo push to be approved) or "disconnected".
+    #[serde(default)]
+    pub state: String,
+    /// While connecting: when the client process started (Unix ms).
+    #[serde(default)]
+    pub connecting_since_ms: Option<u64>,
+    /// Server the client connects to (OpenConnect's host argument), if known.
+    #[serde(default)]
+    pub server: Option<String>,
     /// IPv4 and global IPv6 addresses of the tunnel while connected.
     pub addresses: Vec<String>,
     /// When this service first saw it connected (Unix ms); None while disconnected.

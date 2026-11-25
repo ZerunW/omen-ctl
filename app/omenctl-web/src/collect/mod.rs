@@ -83,7 +83,7 @@ impl Collector {
         let net = network(root, &mut self.net, elapsed);
         let processes =
             process::sample(root, &mut self.processes, elapsed, self.ticks_per_second);
-        let vpn = vpn::sample(root, &mut self.vpn_since, time_ms, &processes);
+        let vpn = vpn::sample(root, &mut self.vpn_since, time_ms, &processes, self.ticks_per_second);
         let igpu = gpu::intel(root, &mut self.igpu, elapsed);
         let nvidia = gpu::nvidia(root, &mut self.nvidia_name);
         let (omen, omen_error) = match self.socket.as_deref().map(daemon_status) {

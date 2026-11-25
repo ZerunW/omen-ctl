@@ -46,11 +46,37 @@ fn protocol_name(p: &str) -> String {
     }
 }
 
+/// The last word of the command line if it is not an option: OpenConnect's server.
+fn server(cmd: &str) -> Option<String> {
+    let last = cmd.split_whitespace().last()?;
+    (!last.starts_with('-') && last != "openconnect" && !last.ends_with("/openconnect")).then(|| last.to_owned())
+}
+
+/// When process `pid` started (Unix ms), from its start time in jiffies since boot.
+fn started_ms(root: &Path, pid: u32, now_ms: u64, ticks_per_second: f64) -> Option<u64> {
+    let stat = fs::read_to_string(root.join(format!("proc/{pid}/stat"))).ok()?;
+    let fields: Vec<&str> = stat.rsplit_once(')')?.1.split_whitespace().collect();
+    // field 22 (starttime) is the 20th after the command name
+    let start_ticks: f64 = fields.get(19)?.parse().ok()?;
+    let uptime: f64 = fs::read_to_string(root.join("proc/uptime")).ok()?.split_whitespace().next()?.parse().ok()?;
+    if ticks_per_second <= 0.0 {
+        return None;
+    }
+    let age_ms = ((uptime - start_ticks / ticks_per_second).max(0.0) * 1000.0) as u64;
+    Some(now_ms.saturating_sub(age_ms))
+}
+
 /// `since`: when each VPN was first seen connected (Unix ms), kept between samples.
-pub(super) fn sample(root: &Path, since: &mut HashMap<String, u64>, now_ms: u64, processes: &[Process]) -> Vec<Vpn> {
+pub(super) fn sample(
+    root: &Path,
+    since: &mut HashMap<String, u64>,
+    now_ms: u64,
+    processes: &[Process],
+    ticks_per_second: f64,
+) -> Vec<Vpn> {
     let ifaces = interfaces(root);
-    // (name, interface, listed)
-    let mut found: Vec<(String, Option<String>)> = Vec::new();
+    // (name, interface, client process for OpenConnect: (pid, server))
+    let mut found: Vec<(String, Option<String>, Option<(u32, Option<String>)>)> = Vec::new();
 
     // OpenConnect: one entry per running openconnect process.
     let mut taken: Vec<String> = Vec::new();
@@ -64,25 +90,33 @@ pub(super) fn sample(root: &Path, since: &mut HashMap<String, u64>, now_ms: u64,
         if let Some(i) = &iface {
             taken.push(i.clone());
         }
-        found.push((format!("OpenConnect ({proto})"), iface));
+        found.push((format!("OpenConnect ({proto})"), iface, Some((p.pid, server(&p.cmd)))));
     }
 
     // Official GlobalProtect client.
     let gpd = ifaces.iter().find(|i| i.starts_with("gpd")).cloned();
     if gpd.is_some() || processes.iter().any(|p| p.name == "PanGPS") {
-        found.push(("GlobalProtect".into(), gpd));
+        found.push(("GlobalProtect".into(), gpd, None));
     }
 
     // Tailscale.
     let ts = ifaces.iter().find(|i| *i == "tailscale0").cloned();
     if ts.is_some() || root.join("usr/sbin/tailscaled").exists() {
-        found.push(("Tailscale".into(), ts));
+        found.push(("Tailscale".into(), ts, None));
     }
 
     let mut out = Vec::new();
     let mut seen = Vec::new();
-    for (name, iface) in found {
+    for (name, iface, client) in found {
         let connected = iface.as_deref().is_some_and(|i| is_up(root, i));
+        // An OpenConnect process without a tunnel is still logging in.
+        let connecting = !connected && client.is_some();
+        let state = if connected { "connected" } else if connecting { "connecting" } else { "disconnected" };
+        let connecting_since_ms = match &client {
+            Some((pid, _)) if connecting => started_ms(root, *pid, now_ms, ticks_per_second),
+            _ => None,
+        };
+        let server = client.and_then(|(_, s)| s);
         let since_ms = if connected { Some(*since.entry(name.clone()).or_insert(now_ms)) } else { None };
         if !connected {
             since.remove(&name);
@@ -92,7 +126,16 @@ pub(super) fn sample(root: &Path, since: &mut HashMap<String, u64>, now_ms: u64,
             _ => Vec::new(),
         };
         seen.push(name.clone());
-        out.push(Vpn { name, interface: iface, connected, addresses, since_ms });
+        out.push(Vpn {
+            name,
+            interface: iface,
+            connected,
+            state: state.into(),
+            connecting_since_ms,
+            server,
+            addresses,
+            since_ms,
+        });
     }
     since.retain(|k, _| seen.contains(k));
     out
@@ -153,5 +196,7 @@ mod unit {
         assert_eq!(arg("openconnect --interface tun3 x", "--interface", Some("-i")), Some("tun3"));
         assert_eq!(arg("openconnect x", "--protocol", None), None);
         assert_eq!(protocol_name("gp"), "GlobalProtect");
+        assert_eq!(server(cmd).as_deref(), Some("vpn.example.edu"));
+        assert_eq!(server("openconnect --protocol=gp"), None);
     }
 }
